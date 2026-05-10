@@ -880,7 +880,7 @@ ${setupLines || "- Sin datos suficientes"}
 `;
 }
 
-
+function buildMentalReport(trades, periodLabel) {
   const m = {};
   trades.forEach(t => {
     const s = t.estado_mental;
