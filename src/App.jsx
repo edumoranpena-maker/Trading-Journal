@@ -361,7 +361,7 @@ function ExecSequence({ trades, year, month }) {
   }, [trades]);
   const yr  = year  !== undefined ? year  : fallback.yr;
   const mon = month !== undefined ? month : fallback.mon;
-  const monthT = trades.filter(t => { const d=new Date(t.date); return d.getFullYear()===yr&&d.getMonth()===mon&&t.ejecutado; }).sort((a,b)=>new Date(a.date)-new Date(b.date));
+  const monthT = trades.filter(t => { const[yrS,moS]=t.date.split("-");return parseInt(yrS)===yr&&parseInt(moS)-1===mon&&t.ejecutado; }).sort((a,b)=>new Date(a.date)-new Date(b.date));
   const count=monthT.length, validCount=monthT.filter(t=>t.validez>=3).length, achieved=validCount>=6;
   const boxes=Math.max(10,count+(10-count%10===10?0:10-count%10));
   const resC=r=>r==="Win"?G.accent:r==="Loss"?G.red:r==="BE"?G.white:G.border;
@@ -388,7 +388,7 @@ function TradingCalendar({ trades }) {
   useEffect(()=>{const tick=()=>{const d=new Date(new Date().toLocaleString("en-US",{timeZone:"America/New_York"}));setNowNY({y:d.getFullYear(),m:d.getMonth(),d:d.getDate()});};const id=setInterval(tick,60_000);return()=>clearInterval(id);},[]);
   const [viewYear,setViewYear]=useState(nowNY.y);
   const [viewMonth,setViewMonth]=useState(nowNY.m);
-  const dayMap=useMemo(()=>{const m={};trades.filter(t=>t.ejecutado).forEach(t=>{const d=new Date(t.date);if(d.getFullYear()===viewYear&&d.getMonth()===viewMonth){const k=d.getDate();if(!m[k])m[k]={pnl:0,count:0};m[k].pnl+=t.pnl;m[k].count++;}});return m;},[trades,viewYear,viewMonth]);
+  const dayMap=useMemo(()=>{const m={};trades.filter(t=>t.ejecutado).forEach(t=>{const[yrS,moS,dyS]=t.date.split("-");const yr2=parseInt(yrS),mo2=parseInt(moS)-1,dy2=parseInt(dyS);if(yr2===viewYear&&mo2===viewMonth){if(!m[dy2])m[dy2]={pnl:0,count:0};m[dy2].pnl+=t.pnl;m[dy2].count++;}});return m;},[trades,viewYear,viewMonth]);
   const firstDow=new Date(viewYear,viewMonth,1).getDay();
   const daysInMonth=new Date(viewYear,viewMonth+1,0).getDate();
   const totalPnl=Object.values(dayMap).reduce((s,v)=>s+v.pnl,0);
@@ -423,8 +423,45 @@ function GroupBars({ data, barColor }) {
 }
 
 function TradeTable({ trades, onDelete, onEdit, showDelete=true }) {
+  const [confirmId, setConfirmId] = useState(null);
+  const confirmTrade = confirmId ? trades.find(t => t.id === confirmId) : null;
+
   return (
     <div style={{ overflowX:"auto" }}>
+      {/* ── Modal de confirmación ── */}
+      {confirmId && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
+          <div style={{ background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:14, padding:"28px 28px 22px", maxWidth:380, width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,0.6)" }}>
+            <div style={{ fontSize:28, textAlign:"center", marginBottom:12 }}>🗑</div>
+            <div style={{ fontSize:14, fontWeight:700, color:G.textPrimary, fontFamily:G.fontDisplay, textAlign:"center", marginBottom:6 }}>
+              ¿Eliminar este trade?
+            </div>
+            {confirmTrade && (
+              <div style={{ background:G.bg, border:`1px solid ${G.border}`, borderRadius:8, padding:"10px 14px", marginBottom:18, fontSize:11, color:G.textSec, textAlign:"center" }}>
+                <span style={{ color:G.textPrimary, fontWeight:600 }}>{confirmTrade.pair}</span>
+                {" · "}{confirmTrade.date}
+                {" · "}<span style={{ color:pColor(confirmTrade.pnl), fontWeight:600 }}>{fmtD(confirmTrade.pnl)}</span>
+              </div>
+            )}
+            <p style={{ fontSize:11, color:G.textSec, textAlign:"center", marginBottom:20, lineHeight:1.5 }}>
+              Esta acción no se puede deshacer.
+            </p>
+            <div style={{ display:"flex", gap:10 }}>
+              <button
+                onClick={() => setConfirmId(null)}
+                style={{ flex:1, background:"none", border:`1px solid ${G.border}`, color:G.textSec, borderRadius:8, padding:"10px 0", cursor:"pointer", fontSize:12, fontFamily:G.fontDisplay, fontWeight:600 }}>
+                Cancelar
+              </button>
+              <button
+                onClick={() => { onDelete(confirmId); setConfirmId(null); }}
+                style={{ flex:1, background:G.red, border:"none", color:"#fff", borderRadius:8, padding:"10px 0", cursor:"pointer", fontSize:12, fontFamily:G.fontDisplay, fontWeight:700 }}>
+                Sí, eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
         <thead><tr style={{ borderBottom:`1px solid ${G.border}` }}>{["Fecha","Hora","Activo","Sesión","Cap","R:R","P&L","Ejec","Setup","Valid","Confluencias","Mental","Link",...(showDelete?[""]:[])].map(h=><th key={h} style={{padding:"7px 10px",textAlign:"left",color:G.textSec,fontWeight:400,fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
         <tbody>
@@ -443,7 +480,7 @@ function TradeTable({ trades, onDelete, onEdit, showDelete=true }) {
               <td style={{padding:"8px 10px"}}><div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{(t.confluencias||[]).map(c=><span key={c} style={{fontSize:9,background:G.blueDim,color:G.blue,borderRadius:10,padding:"1px 7px",border:`1px solid ${G.blue}33`,whiteSpace:"nowrap"}}>{c}</span>)}</div></td>
               <td style={{padding:"8px 10px"}}><MentalStateChip val={t.estado_mental||"—"}/></td>
               <td style={{padding:"8px 10px"}}>{t.link?<a href={t.link} target="_blank" rel="noreferrer" style={{color:G.blue,fontSize:10,textDecoration:"none"}}>🔗</a>:<span style={{color:G.textMuted}}>—</span>}</td>
-              {showDelete&&<td style={{padding:"8px 10px"}}><div style={{display:"flex",gap:6}}>{onEdit&&<button onClick={()=>onEdit(t)} style={{background:"none",border:"none",color:G.textSec,cursor:"pointer",fontSize:12}}>✎</button>}{onDelete&&<button onClick={()=>onDelete(t.id)} style={{background:"none",border:"none",color:G.textMuted,cursor:"pointer",fontSize:14,lineHeight:1}}>×</button>}</div></td>}
+              {showDelete&&<td style={{padding:"8px 10px"}}><div style={{display:"flex",gap:6}}>{onEdit&&<button onClick={()=>onEdit(t)} style={{background:"none",border:"none",color:G.textSec,cursor:"pointer",fontSize:12}}>✎</button>}{onDelete&&<button onClick={()=>setConfirmId(t.id)} style={{background:"none",border:"none",color:G.textMuted,cursor:"pointer",fontSize:14,lineHeight:1}}>×</button>}</div></td>}
             </tr>
           ))}
         </tbody>
@@ -672,254 +709,228 @@ function EconomicCalendar() {
 
 // Tipos de reporte disponibles
 const REPORT_TYPES = [
-  { id:"metricas",  label:"Métricas Generales",    icon:"📊", desc:"KPIs completos + análisis de ejecución y conclusiones IA" },
-  { id:"mental",    label:"Mental State & Trading", icon:"🧠", desc:"Análisis del estado mental y su impacto en el rendimiento" },
-  { id:"ejecutivo", label:"Reporte Ejecutivo",      icon:"📋", desc:"Resumen ejecutivo de alto nivel con puntos de acción" },
-  { id:"graficos",  label:"Gráficos & Métricas Visuales", icon:"📈", desc:"Reporte visual con curva de equity, distribuciones y rankings" },
+  { id:"metricas", label:"Métricas Generales",    icon:"📊", desc:"KPIs completos, rachas, ejecución y resumen del período" },
+  { id:"mental",   label:"Mental State Report",   icon:"🧠", desc:"Rendimiento agrupado por estado mental con ejecución y PnL" },
+  { id:"edge",     label:"Edge Realization Report", icon:"⚡", desc:"Análisis de validez del edge: setups válidos, execution rate, winrate, expectancy y drawdown" },
 ];
 
-// Genera el prompt de IA para cada tipo de reporte
-function buildPrompt(type, stats, trades, periodLabel, tf) {
-  const exec = trades.filter(t => t.ejecutado);
-  const nonExec = trades.filter(t => !t.ejecutado);
-  const wins = exec.filter(t => getResult(t) === "Win");
-  const losses = exec.filter(t => getResult(t) === "Loss");
-  const bes = exec.filter(t => getResult(t) === "BE");
+// ── Generadores de reporte sin IA ─────────────────────────────────────────────
+// Toman los datos y producen texto estructurado en markdown que luego
+// el renderer y el PDF pueden usar directamente.
 
-  // Mental state breakdown
-  const mentalMap = {};
-  trades.forEach(t => {
-    if (!t.estado_mental) return;
-    if (!mentalMap[t.estado_mental]) mentalMap[t.estado_mental] = { total:0, exec:0, wins:0, netPnl:0 };
-    mentalMap[t.estado_mental].total++;
-    if (t.ejecutado) { mentalMap[t.estado_mental].exec++; mentalMap[t.estado_mental].netPnl += t.pnl; if (getResult(t)==="Win") mentalMap[t.estado_mental].wins++; }
-  });
-  const mentalSummary = Object.entries(mentalMap).map(([state, d]) => `- ${state}: ${d.total} apariciones, ${d.exec} ejecutados, Win Rate ${d.exec>0?((d.wins/d.exec)*100).toFixed(0):0}%, PnL neto $${d.netPnl.toFixed(0)}, polaridad: ${getMentalPolarity(state)||"neutral"}`).join("\n");
+function buildMetricasReport(stats, trades, periodLabel) {
+  const exec    = trades.filter(t => t.ejecutado);
+  const wins    = exec.filter(t => getResult(t) === "Win");
+  const losses  = exec.filter(t => getResult(t) === "Loss");
+  const bes     = exec.filter(t => getResult(t) === "BE");
+  const nonExec = trades.filter(t => !t.ejecutado);
 
   // Setup breakdown
   const setupMap = {};
   exec.forEach(t => {
     if (!setupMap[t.setup]) setupMap[t.setup] = { total:0, wins:0, pnl:0, r:0 };
     setupMap[t.setup].total++;
-    if (getResult(t)==="Win") setupMap[t.setup].wins++;
+    if (getResult(t) === "Win") setupMap[t.setup].wins++;
     setupMap[t.setup].pnl += t.pnl;
-    setupMap[t.setup].r += t.rr;
+    setupMap[t.setup].r   += t.rr;
   });
-  const setupSummary = Object.entries(setupMap).map(([s,d]) => `- ${s}: ${d.total} trades, WR ${d.total?((d.wins/d.total)*100).toFixed(0):0}%, PnL $${d.pnl.toFixed(0)}, R total ${d.r.toFixed(2)}`).join("\n");
+  const setupLines = Object.entries(setupMap)
+    .sort(([,a],[,b]) => b.pnl - a.pnl)
+    .map(([s,d]) => `- **${s}**: ${d.total} trades · WR ${d.total ? ((d.wins/d.total)*100).toFixed(0) : 0}% · PnL ${fmtD(d.pnl)} · ${fmtR(d.r)}`)
+    .join("\n");
 
   // Session breakdown
-  const sesionMap = {};
+  const sesMap = {};
   exec.forEach(t => {
-    if (!sesionMap[t.sesion]) sesionMap[t.sesion] = { total:0, wins:0, pnl:0 };
-    sesionMap[t.sesion].total++;
-    if (getResult(t)==="Win") sesionMap[t.sesion].wins++;
-    sesionMap[t.sesion].pnl += t.pnl;
+    if (!sesMap[t.sesion]) sesMap[t.sesion] = { total:0, wins:0, pnl:0 };
+    sesMap[t.sesion].total++;
+    if (getResult(t) === "Win") sesMap[t.sesion].wins++;
+    sesMap[t.sesion].pnl += t.pnl;
   });
-  const sesionSummary = Object.entries(sesionMap).map(([s,d]) => `- ${s}: ${d.total} trades, WR ${d.total?((d.wins/d.total)*100).toFixed(0):0}%, PnL $${d.pnl.toFixed(0)}`).join("\n");
+  const sesLines = Object.entries(sesMap)
+    .sort(([,a],[,b]) => b.pnl - a.pnl)
+    .map(([s,d]) => `- **${s}**: ${d.total} trades · WR ${d.total ? ((d.wins/d.total)*100).toFixed(0) : 0}% · PnL ${fmtD(d.pnl)}`)
+    .join("\n");
 
-  const baseData = `
-PERÍODO: ${periodLabel} (${tf})
-DATOS CRUDOS:
-- Setups válidos totales: ${trades.length}
-- Ejecutados: ${exec.length}
-- No ejecutados: ${nonExec.length}
-- Wins: ${wins.length}
-- Losses: ${losses.length}
-- Breakeven (BE): ${bes.length}
-- Win Rate: ${stats.winRate}%
-- Avg Win (R): ${stats.avgRR}R
-- Avg Loss (R): ${Math.abs(losses.length ? losses.reduce((s,t)=>s+t.rr,0)/losses.length : 0).toFixed(2)}R
-- Avg Win ($): $${stats.avgWin.toFixed(0)}
-- Avg Loss ($): $${Math.abs(stats.avgLoss).toFixed(0)}
-- Expectancy: ${stats.expValue}R por trade
-- Resultado neto: ${stats.totalR}R / $${stats.totalPnl.toFixed(0)}
-- Resultado potencial (si todos ejecutados): ${stats.potentialR}R / $${stats.potentialPnl}
-- Execution Rate: ${stats.execRate}%
-- Max Drawdown: -$${stats.maxDD} / -${stats.maxDDR}R
-- Profit Factor: ${stats.profitFactor}
-- Mejor racha: ${stats.bestStreak} trades consecutivos ganadores
-- Peor racha: ${Math.abs(stats.worstStreak)} trades consecutivos perdedores
+  // Day of week
+  const dowMap = {};
+  exec.forEach(t => {
+    const[yrS,moS,dyS]=t.date.split("-");
+    const dow = new Date(parseInt(yrS), parseInt(moS)-1, parseInt(dyS)).getDay();
+    const label = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"][dow];
+    if (!dowMap[label]) dowMap[label] = { total:0, wins:0, pnl:0 };
+    dowMap[label].total++;
+    if (getResult(t) === "Win") dowMap[label].wins++;
+    dowMap[label].pnl += t.pnl;
+  });
+  const dowLines = Object.entries(dowMap)
+    .sort(([,a],[,b]) => b.pnl - a.pnl)
+    .map(([d,v]) => `- **${d}**: ${v.total} trades · WR ${v.total ? ((v.wins/v.total)*100).toFixed(0) : 0}% · PnL ${fmtD(v.pnl)}`)
+    .join("\n");
 
-RENDIMIENTO POR SETUP:
-${setupSummary || "Sin datos"}
+  const avgWin  = wins.length  ? (wins.reduce((s,t)=>s+t.pnl,0)/wins.length).toFixed(0)   : "0";
+  const avgLoss = losses.length ? (losses.reduce((s,t)=>s+t.pnl,0)/losses.length).toFixed(0) : "0";
 
-RENDIMIENTO POR SESIÓN:
-${sesionSummary || "Sin datos"}
+  return `## MÉTRICAS GENERALES — ${periodLabel}
 
-ESTADOS MENTALES:
-${mentalSummary || "Sin datos"}
-`;
+### Resumen del Período
+- **Total registros**: ${trades.length} (${exec.length} ejecutados · ${nonExec.length} no ejecutados)
+- **Execution Rate**: ${stats.execRate}%
+- **Win Rate**: ${stats.winRate}% (${wins.length}W · ${losses.length}L · ${bes.length}BE)
+- **Net PnL**: ${fmtD(stats.totalPnl)}
+- **Net R**: ${fmtR(parseFloat(stats.totalR))}
+- **Profit Factor**: ${stats.profitFactor}
+- **Expected Value**: ${stats.expValue}R por trade
 
-  if (type === "metricas") {
-    return `Eres un coach de trading profesional especialista en análisis de rendimiento. Analiza los siguientes datos de trading del período ${periodLabel} y genera un reporte estructurado en español.
-
-${baseData}
-
-GENERA EL SIGUIENTE REPORTE ESTRUCTURADO (usa exactamente estos encabezados con formato claro):
-
-## MÉTRICAS GENERALES — ${periodLabel}
-
-### Datos del Período
-Presenta una tabla o lista clara con todos los KPIs:
-- Setups válidos, Ejecutados, No ejecutados
-- Wins, Losses, BE
-- Win Rate, Avg Win (R y $), Avg Loss (R y $)
-- Expectancy, Resultado neto (R y $)
-- Resultado potencial si se ejecutaban todos (R y $)
-- Execution Rate, Max DD (R y %)
-
-### Análisis de Calidad de Ejecución
-Analiza qué significa el execution rate, qué se perdió o evitó al no ejecutar todos los setups.
+### Gestión de Capital
+- **Max Drawdown**: -$${stats.maxDD} (${fmtR(-Math.abs(parseFloat(stats.maxDDR)))})
+- **Avg. trade ganador**: +$${avgWin}
+- **Avg. trade perdedor**: $${avgLoss}
+- **Mejor racha ganadora**: ${stats.bestStreak} trades consecutivos
+- **Peor racha perdedora**: ${Math.abs(stats.worstStreak)} trades consecutivos
 
 ### Rendimiento por Setup
-Analiza cuáles setups están funcionando bien y cuáles requieren revisión.
+${setupLines || "- Sin datos suficientes"}
 
 ### Rendimiento por Sesión
-Analiza las sesiones de trading y su impacto.
+${sesLines || "- Sin datos suficientes"}
 
-### CONCLUSIÓN
+### Rendimiento por Día de la Semana
+${dowLines || "- Sin datos suficientes"}
+`;
+}
 
-#### Fortalezas del Período
-(Mínimo 3 puntos concretos y específicos basados en los datos)
+function buildEdgeReport(stats, trades, periodLabel) {
+  const exec    = trades.filter(t => t.ejecutado);
+  const wins    = exec.filter(t => getResult(t) === "Win");
+  const losses  = exec.filter(t => getResult(t) === "Loss");
+  const bes     = exec.filter(t => getResult(t) === "BE");
+  const nonExec = trades.filter(t => !t.ejecutado);
 
-#### Debilidades del Período
-(Mínimo 3 puntos concretos y específicos basados en los datos)
+  // Setups válidos = validez >= 3
+  const validSetups  = trades.filter(t => t.validez >= 3);
+  const validExec    = validSetups.filter(t => t.ejecutado);
+  const validNonExec = validSetups.filter(t => !t.ejecutado);
 
-#### ¿Qué debo mejorar para el siguiente período?
-(Acciones concretas y específicas, no genéricas)
+  // Avg Win / Loss en R
+  const avgWinR  = wins.length   ? (wins.reduce((s,t)=>s+t.rr,0)/wins.length).toFixed(2)   : "0.00";
+  const avgLossR = losses.length ? (Math.abs(losses.reduce((s,t)=>s+t.rr,0)/losses.length)).toFixed(2) : "0.00";
 
-#### ¿Qué debo fortalecer en el siguiente período?
-(Lo que está funcionando y cómo potenciarlo)
+  // Potential R y % si todos los setups válidos se hubieran ejecutado
+  const potentialR   = validSetups.reduce((s,t)=>s+t.rr,0);
+  const potentialPnl = validSetups.reduce((s,t)=>s+t.pnl,0);
 
-Sé específico, usa los números exactos de los datos, no des respuestas genéricas. El análisis debe ser profundo y accionable.`;
-  }
+  // Max Drawdown en R y en $
+  const maxDDR  = parseFloat(stats.maxDDR)  || 0;
+  const maxDDDol = parseFloat(stats.maxDD)  || 0;
 
-  if (type === "mental") {
-    return `Eres un psicólogo del trading y coach de performance. Analiza los datos de estado mental y su relación con el rendimiento en el período ${periodLabel}.
+  // Execution rate sobre setups válidos
+  const execRateValid = validSetups.length > 0
+    ? ((validExec.length / validSetups.length) * 100).toFixed(1)
+    : "0.0";
 
-${baseData}
+  // Setup breakdown (solo válidos, >=3)
+  const setupMap = {};
+  validExec.forEach(t => {
+    if (!setupMap[t.setup]) setupMap[t.setup] = { total:0, wins:0, r:0, pnl:0 };
+    setupMap[t.setup].total++;
+    if (getResult(t) === "Win") setupMap[t.setup].wins++;
+    setupMap[t.setup].r   += t.rr;
+    setupMap[t.setup].pnl += t.pnl;
+  });
+  const setupLines = Object.entries(setupMap)
+    .sort(([,a],[,b]) => b.pnl - a.pnl)
+    .map(([s,d]) => `- **${s}**: ${d.total} ejec. · WR ${d.total ? ((d.wins/d.total)*100).toFixed(0) : 0}% · ${fmtR(d.r)} · PnL ${fmtD(d.pnl)}`)
+    .join("\n");
 
-GENERA EL SIGUIENTE REPORTE (usa exactamente estos encabezados):
+  return `## EDGE REALIZATION REPORT — ${periodLabel}
 
-## REPORTE MENTAL STATE — ${periodLabel}
+### Setups & Ejecución
+- **Setups válidos (validez ≥ 3)**: ${validSetups.length} (${validExec.length} ejecutados · ${validNonExec.length} no ejecutados)
+- **Ejecutados (total período)**: ${exec.length}
+- **No ejecutados (total período)**: ${nonExec.length}
+- **Execution Rate (sobre válidos)**: ${execRateValid}%
+- **Execution Rate (total)**: ${stats.execRate}%
 
-### Estado Mental Dominante
-Identifica el estado mental más frecuente y qué dice de la psicología del trader en este período.
+### Resultados
+- **Wins**: ${wins.length}
+- **Losses**: ${losses.length}
+- **Breakeven (BE)**: ${bes.length}
+- **Win Rate**: ${stats.winRate}%
 
-### Impacto de los Estados Positivos vs Negativos
-Compara el rendimiento (Win Rate, PnL, Execution Rate) entre sesiones con estados mentales positivos vs negativos. Sé preciso con los números.
+### Métricas de Edge
+- **Avg Win (R)**: +${avgWinR}R
+- **Avg Loss (R)**: -${avgLossR}R
+- **Expectancy**: ${stats.expValue}R por trade
+- **Profit Factor**: ${stats.profitFactor}
 
-### Análisis Individual por Estado Mental
-Para cada estado mental que aparece en los datos, analiza:
-- Frecuencia y contexto
-- Impacto en las decisiones de ejecución
-- Impacto en los resultados (Win Rate y PnL)
-- Correlación con losses o wins específicos
+### Resultado Potencial
+- **Resultado potencial (si todos los válidos ejecutados)**: ${fmtR(potentialR)} / PnL ${fmtD(parseFloat(potentialPnl.toFixed(0)))}
+- **Resultado real (ejecutados)**: ${fmtR(parseFloat(stats.totalR))} / PnL ${fmtD(parseFloat(stats.totalPnl.toFixed ? stats.totalPnl.toFixed(0) : stats.totalPnl))}
+- **Oportunidad no capturada**: ${fmtR(parseFloat((potentialR - parseFloat(stats.totalR)).toFixed(2)))}
 
-### Patrones Psicológicos Detectados
-Identifica patrones: ¿qué emociones generan over-trading? ¿cuáles generan under-trading? ¿cuáles correlacionan con mejores resultados?
+### Risk Management
+- **Max Drawdown (R)**: ${fmtR(-Math.abs(maxDDR))}
+- **Max Drawdown ($)**: -$${maxDDDol}
+- **Mejor racha ganadora**: ${stats.bestStreak} trades consecutivos
+- **Peor racha perdedora**: ${Math.abs(stats.worstStreak)} trades consecutivos
 
-### CONCLUSIONES PSICOLÓGICAS
+### Edge por Setup (válidos ejecutados)
+${setupLines || "- Sin datos suficientes"}
+`;
+}
 
-#### Fortalezas Mentales
-#### Vulnerabilidades Psicológicas
-#### Plan de Acción Mental para el Siguiente Período
-(3-5 acciones concretas y prácticas para mejorar el estado mental)
 
-#### Protocolo de Estado Mental Recomendado
-Describe rutinas o checklists mentales basados en los patrones encontrados.
+  const m = {};
+  trades.forEach(t => {
+    const s = t.estado_mental;
+    if (!s) return;
+    if (!m[s]) m[s] = { total:0, exec:0, wins:0, netPnl:0, missed:0, avoided:0, polarity: getMentalPolarity(s) };
+    m[s].total++;
+    if (t.ejecutado) {
+      m[s].exec++;
+      m[s].netPnl += t.pnl;
+      if (getResult(t) === "Win") m[s].wins++;
+    } else {
+      if (t.rr > 0) m[s].missed  += Math.abs(t.pnl);
+      if (t.rr < 0) m[s].avoided += Math.abs(t.pnl);
+    }
+  });
 
-Sé directo, usa los datos específicos, y da recomendaciones prácticas.`;
-  }
+  const rows = Object.entries(m)
+    .sort(([,a],[,b]) => b.netPnl - a.netPnl)
+    .map(([state, d]) => {
+      const wr = d.exec > 0 ? ((d.wins/d.exec)*100).toFixed(0) : "—";
+      const pol = d.polarity === "positive" ? "▲" : d.polarity === "negative" ? "▼" : "·";
+      return `- ${pol} **${state}**: ${d.exec}/${d.total} ejecutados · WR ${wr}% · Net PnL ${fmtD(d.netPnl)} · Missed ${d.missed>0?fmtD(d.missed):"—"} · Avoided ${d.avoided>0?fmtD(d.avoided):"—"}`;
+    })
+    .join("\n");
 
-  if (type === "ejecutivo") {
-    return `Eres un analista financiero senior. Genera un reporte ejecutivo conciso pero completo para el período ${periodLabel}.
+  const positivos = Object.entries(m).filter(([,d])=>d.polarity==="positive");
+  const negativos = Object.entries(m).filter(([,d])=>d.polarity==="negative");
+  const pnlPos = positivos.reduce((s,[,d])=>s+d.netPnl,0);
+  const pnlNeg = negativos.reduce((s,[,d])=>s+d.netPnl,0);
+  const topState = Object.entries(m).sort(([,a],[,b])=>b.netPnl-a.netPnl)[0];
+  const worstState = Object.entries(m).sort(([,a],[,b])=>a.netPnl-b.netPnl)[0];
 
-${baseData}
+  return `## MENTAL STATE REPORT — ${periodLabel}
 
-GENERA EL SIGUIENTE REPORTE EJECUTIVO (estructura clara y ejecutiva):
+### Resumen por Estado Mental
+${rows || "- Sin datos de estado mental en este período"}
 
-## REPORTE EJECUTIVO — ${periodLabel}
+### Comparativa: Positivo vs Negativo
+- **Estados positivos (▲)**: ${positivos.length} estados · PnL total ${fmtD(pnlPos)}
+- **Estados negativos (▼)**: ${negativos.length} estados · PnL total ${fmtD(pnlNeg)}
 
-### Resumen Ejecutivo (3-4 oraciones)
-El estado del trading en este período en términos de negocio.
-
-### Indicadores Clave de Performance
-Tabla/lista con los KPIs más importantes y su evaluación (bueno/regular/malo con justificación).
-
-### Highlights del Período
-• Mayor logro del período
-• Mayor desafío del período
-• Momento de inflexión más importante
-
-### Análisis de Riesgo
-Drawdown, rachas negativas, gestión del capital.
-
-### Análisis de Oportunidad
-¿Cuánto dinero se dejó sobre la mesa? ¿Por qué?
-
-### Evaluación General del Período
-Calificación del período (1-10) con justificación detallada basada en: discipline score, execution score, profit score.
-
-### Objetivos para el Siguiente Período
-3-5 objetivos SMART (específicos, medibles, alcanzables, relevantes, con tiempo definido) basados en los datos.
-
-### Conclusión Ejecutiva
-Párrafo final con el veredicto del período y la dirección estratégica.
-
-Sé preciso, usa datos concretos, y escribe con tono profesional pero directo.`;
-  }
-
-  if (type === "graficos") {
-    return `Eres un analista cuantitativo de trading. Genera un reporte de análisis visual y cuantitativo para el período ${periodLabel}.
-
-${baseData}
-
-GENERA EL SIGUIENTE REPORTE (describe los datos de forma que sean visualmente interpretables):
-
-## REPORTE DE GRÁFICOS Y MÉTRICAS VISUALES — ${periodLabel}
-
-### Curva de Equity — Análisis
-Describe la forma de la curva de equity basándote en los trades secuenciales. ¿Es ascendente, volátil, con drawdowns pronunciados? ¿Qué dice de la consistencia?
-
-### Distribución de Resultados
-Analiza la distribución de Wins/Losses/BE:
-- ¿Está bien distribuida?
-- ¿El ratio Win/Loss es saludable?
-- ¿Los BE están restando potencial?
-
-### Análisis de R:R Distribution
-Analiza los R:R obtenidos: ¿son consistentes? ¿hay outliers positivos o negativos relevantes?
-
-### Mapa de Calor de Performance
-Analiza por:
-- **Día de la semana**: ¿qué días generan más resultados positivos?
-- **Sesión de trading**: ranking de sesiones por performance
-- **Setup**: ranking de setups por performance
-
-### Métricas de Volatilidad y Consistencia
-- Análisis de rachas (buenas y malas)
-- Consistencia de execution rate
-- Variabilidad del PnL
-
-### Correlaciones Detectadas
-¿Qué variables tienen mayor correlación con el resultado positivo? (setup + sesión + estado mental + validez)
-
-### Ranking Final de Métricas
-Presenta un ranking de los factores que más impactan positiva y negativamente el performance.
-
-### Insights Cuantitativos
-3-5 insights concretos que los datos revelan y que no son obvios a simple vista.
-
-Sé analítico, cuantitativo y usa los datos disponibles con precisión.`;
-  }
-
-  return "Genera un análisis de trading.";
+### Highlights
+- **Mejor estado mental**: ${topState ? `${topState[0]} (${fmtD(topState[1].netPnl)})` : "—"}
+- **Peor estado mental**: ${worstState ? `${worstState[0]} (${fmtD(worstState[1].netPnl)})` : "—"}
+- **Trades sin etiquetar**: ${trades.filter(t=>!t.estado_mental).length}
+`;
 }
 
 // Función para generar PDF usando jsPDF (cargado dinámicamente)
 async function generatePDF(reportContent, reportType, periodLabel) {
-  // Cargamos jsPDF si no está disponible
   if (!window.jspdf) {
     await new Promise((resolve, reject) => {
       const script = document.createElement('script');
@@ -931,338 +942,182 @@ async function generatePDF(reportContent, reportType, periodLabel) {
   }
 
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
   const pageW = 210, pageH = 297, margin = 18, contentW = pageW - margin * 2;
   let y = margin;
 
   const typeInfo = REPORT_TYPES.find(r => r.id === reportType);
 
-  // ─ Header
+  // Header
   doc.setFillColor(7, 8, 12);
   doc.rect(0, 0, pageW, 42, 'F');
   doc.setFillColor(0, 200, 150);
   doc.rect(0, 42, pageW, 1, 'F');
-
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(18);
   doc.setTextColor(0, 200, 150);
   doc.text('TRADEPULSE', margin, 16);
   doc.setFontSize(8);
   doc.setTextColor(94, 104, 128);
-  doc.text('JOURNAL PRO · REPORTE GENERADO POR IA', margin, 22);
+  doc.text('JOURNAL PRO', margin, 22);
   doc.setFontSize(13);
   doc.setTextColor(212, 217, 232);
   doc.text(typeInfo.label.toUpperCase(), margin, 33);
   doc.setFontSize(9);
   doc.setTextColor(94, 104, 128);
-  doc.text(`Período: ${periodLabel}  ·  Generado: ${new Date().toLocaleDateString('es-ES', { day:'2-digit', month:'long', year:'numeric' })}`, margin, 39);
-
+  doc.text(`Período: ${periodLabel}  ·  ${new Date().toLocaleDateString('es-ES', { day:'2-digit', month:'long', year:'numeric' })}`, margin, 39);
   y = 52;
 
-  // ─ Parse and render markdown-like content
-  const lines = reportContent.split('\n');
   const addPage = () => {
     doc.addPage();
     doc.setFillColor(7, 8, 12);
     doc.rect(0, 0, pageW, 12, 'F');
     doc.setFillColor(0, 200, 150);
     doc.rect(0, 12, pageW, 0.5, 'F');
-    doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.setTextColor(94, 104, 128);
     doc.text('TRADEPULSE JOURNAL PRO', margin, 8);
-    doc.text(`${periodLabel} · ${typeInfo.label}`, pageW - margin, 8, { align: 'right' });
+    doc.text(`${periodLabel} · ${typeInfo.label}`, pageW - margin, 8, { align:'right' });
     y = 20;
   };
-
   const checkPage = (needed = 8) => { if (y + needed > pageH - 14) addPage(); };
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
+  for (const line of reportContent.split('\n')) {
     if (line.startsWith('## ')) {
-      checkPage(16);
-      if (y > 55) { y += 4; }
+      checkPage(16); if (y > 55) y += 4;
       doc.setFillColor(13, 15, 22);
       doc.roundedRect(margin - 3, y - 5, contentW + 6, 11, 2, 2, 'F');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(12);
-      doc.setTextColor(0, 200, 150);
-      doc.text(line.replace('## ', ''), margin, y + 2);
-      y += 10;
-      doc.setFillColor(0, 200, 150);
-      doc.rect(margin, y, contentW, 0.5, 'F');
-      y += 5;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(0, 200, 150);
+      doc.text(line.replace('## ', ''), margin, y + 2); y += 10;
+      doc.setFillColor(0, 200, 150); doc.rect(margin, y, contentW, 0.5, 'F'); y += 5;
     } else if (line.startsWith('### ')) {
-      checkPage(12);
-      y += 3;
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor(232, 237, 248);
-      doc.text(line.replace('### ', ''), margin, y);
-      y += 1;
-      doc.setFillColor(26, 31, 46);
-      doc.rect(margin, y + 1, contentW, 0.3, 'F');
-      y += 5;
-    } else if (line.startsWith('#### ')) {
-      checkPage(9);
-      y += 2;
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9);
-      doc.setTextColor(79, 142, 245);
-      doc.text(line.replace('#### ', ''), margin + 2, y);
-      y += 5;
+      checkPage(12); y += 3;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(232, 237, 248);
+      doc.text(line.replace('### ', ''), margin, y); y += 1;
+      doc.setFillColor(26, 31, 46); doc.rect(margin, y + 1, contentW, 0.3, 'F'); y += 5;
     } else if (line.startsWith('- ') || line.startsWith('• ')) {
-      const text = line.replace(/^[-•]\s*/, '');
+      const text = line.replace(/^[-•]\s*/, '').replace(/\*\*/g, '');
       const wrapped = doc.splitTextToSize(`• ${text}`, contentW - 4);
       checkPage(wrapped.length * 4.5 + 1);
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8.5);
-      doc.setTextColor(180, 185, 200);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(180, 185, 200);
       wrapped.forEach(wl => { doc.text(wl, margin + 3, y); y += 4.5; });
-    } else if (line.match(/^\*\*.+\*\*/)) {
-      // Bold line
-      const text = line.replace(/\*\*/g, '');
-      const wrapped = doc.splitTextToSize(text, contentW);
-      checkPage(wrapped.length * 4.5 + 1);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8.5);
-      doc.setTextColor(212, 217, 232);
-      wrapped.forEach(wl => { doc.text(wl, margin, y); y += 4.5; });
     } else if (line.trim() === '') {
       y += 2;
     } else {
-      // Normal text — split bold markers
-      const parts = line.split(/(\*\*[^*]+\*\*)/g);
-      const fullText = parts.map(p => p.replace(/\*\*/g, '')).join('');
-      const wrapped = doc.splitTextToSize(fullText, contentW);
+      const text = line.replace(/\*\*/g, '');
+      const wrapped = doc.splitTextToSize(text, contentW);
       checkPage(wrapped.length * 4.5);
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8.5);
-      doc.setTextColor(180, 185, 200);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(180, 185, 200);
       wrapped.forEach(wl => { doc.text(wl, margin, y); y += 4.5; });
     }
   }
 
-  // ─ Footer on last page
+  // Footer
   const totalPages = doc.internal.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
     doc.setPage(p);
-    doc.setFillColor(7, 8, 12);
-    doc.rect(0, pageH - 10, pageW, 10, 'F');
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.setTextColor(40, 47, 66);
+    doc.setFillColor(7, 8, 12); doc.rect(0, pageH - 10, pageW, 10, 'F');
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(40, 47, 66);
     doc.text(`TradePulse Journal Pro · ${typeInfo.label} · ${periodLabel}`, margin, pageH - 4);
-    doc.text(`Página ${p} de ${totalPages}`, pageW - margin, pageH - 4, { align: 'right' });
+    doc.text(`Página ${p} de ${totalPages}`, pageW - margin, pageH - 4, { align:'right' });
   }
 
-  const fileName = `tradepulse_${reportType}_${periodLabel.replace(/\s+/g, '_').toLowerCase()}_${new Date().toISOString().slice(0,10)}.pdf`;
+  const fileName = `tradepulse_${reportType}_${periodLabel.replace(/\s+/g,'_').toLowerCase()}_${new Date().toISOString().slice(0,10)}.pdf`;
   doc.save(fileName);
 }
 
 // ─── Reportes Tab Component ───────────────────────────────────────────────────
 function ReportesTab({ trades }) {
-  const [reportTf, setReportTf]           = useState("monthly");
-  const [reportPeriod, setReportPeriod]   = useState("");
-  const [selectedType, setSelectedType]   = useState("metricas");
-  const [generating, setGenerating]       = useState(false);
+  const [reportTf,     setReportTf]     = useState("monthly");
+  const [reportPeriod, setReportPeriod] = useState("");
+  const [selectedType, setSelectedType] = useState("metricas");
   const [generatedContent, setGeneratedContent] = useState(null);
-  const [activeReport, setActiveReport]   = useState(null);
-  const [error, setError]                 = useState(null);
-  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [activeReport,     setActiveReport]     = useState(null);
+  const [error,            setError]            = useState(null);
+  const [downloadingPdf,   setDownloadingPdf]   = useState(false);
   const previewRef = useRef(null);
 
-  // Sync period when TF changes
   useEffect(() => {
     const opts = buildPeriodOptions(reportTf, trades);
     setReportPeriod(opts.length ? opts[0].id : "");
     setGeneratedContent(null);
     setActiveReport(null);
-  }, [reportTf, trades]);
+  }, [reportTf]); // eslint-disable-line
 
-  const periodOptions = useMemo(() => buildPeriodOptions(reportTf, trades), [reportTf, trades]);
+  const periodOptions  = useMemo(() => buildPeriodOptions(reportTf, trades), [reportTf, trades]);
   const filteredTrades = useMemo(() => filterByPeriod(trades, reportTf, reportPeriod), [trades, reportTf, reportPeriod]);
-  const stats = useMemo(() => calcStats(filteredTrades), [filteredTrades]);
+  const stats          = useMemo(() => calcStats(filteredTrades), [filteredTrades]);
+  const periodLabel    = useMemo(() => periodOptions.find(o => o.id === reportPeriod)?.label || reportPeriod || "Período", [periodOptions, reportPeriod]);
 
-  const periodLabel = useMemo(() => {
-    const opt = periodOptions.find(o => o.id === reportPeriod);
-    return opt ? opt.label : reportPeriod || "Período seleccionado";
-  }, [periodOptions, reportPeriod]);
-
-  async function handleGenerate() {
+  function handleGenerate() {
     if (!filteredTrades.length) { setError("No hay trades en el período seleccionado."); return; }
-    setGenerating(true);
     setError(null);
-    setGeneratedContent(null);
-
-    try {
-      const prompt = buildPrompt(selectedType, stats, filteredTrades, periodLabel, reportTf);
-
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          messages: [{ role: "user", content: prompt }]
-        })
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error?.message || `Error ${response.status}`);
-      }
-
-      const data = await response.json();
-      const content = data.content.map(c => c.text || "").join("\n");
-
-      setGeneratedContent(content);
-      setActiveReport(selectedType);
-
-      // Scroll to preview
-      setTimeout(() => previewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
-    } catch (e) {
-      setError(`Error al generar el reporte: ${e.message}`);
-    } finally {
-      setGenerating(false);
-    }
+    let content = "";
+    if (selectedType === "metricas") content = buildMetricasReport(stats, filteredTrades, periodLabel);
+    if (selectedType === "mental")   content = buildMentalReport(filteredTrades, periodLabel);
+    if (selectedType === "edge")     content = buildEdgeReport(stats, filteredTrades, periodLabel);
+    setGeneratedContent(content);
+    setActiveReport(selectedType);
+    setTimeout(() => previewRef.current?.scrollIntoView({ behavior:"smooth", block:"start" }), 100);
   }
 
   async function handleDownloadPDF() {
     if (!generatedContent) return;
     setDownloadingPdf(true);
-    try {
-      await generatePDF(generatedContent, activeReport, periodLabel);
-    } catch (e) {
-      setError("Error al generar el PDF: " + e.message);
-    } finally {
-      setDownloadingPdf(false);
-    }
+    try { await generatePDF(generatedContent, activeReport, periodLabel); }
+    catch (e) { setError("Error al generar PDF: " + e.message); }
+    finally { setDownloadingPdf(false); }
   }
 
-  // Render markdown-like content in the preview
   function renderContent(content) {
-    const lines = content.split('\n');
-    const elements = [];
-    let key = 0;
-
-    lines.forEach(line => {
+    const elements = []; let key = 0;
+    content.split('\n').forEach(line => {
       if (line.startsWith('## ')) {
-        elements.push(
-          <div key={key++} style={{ marginTop:24, marginBottom:10 }}>
-            <div style={{ background:"rgba(0,200,150,0.06)", border:`1px solid ${G.accent}33`, borderRadius:8, padding:"10px 16px" }}>
-              <div style={{ fontSize:14, fontWeight:700, color:G.accent, fontFamily:G.fontDisplay, letterSpacing:"-0.02em" }}>
-                {line.replace('## ', '')}
-              </div>
-            </div>
-          </div>
-        );
+        elements.push(<div key={key++} style={{ marginTop:24, marginBottom:10 }}><div style={{ background:"rgba(0,200,150,0.06)", border:`1px solid ${G.accent}33`, borderRadius:8, padding:"10px 16px" }}><div style={{ fontSize:14, fontWeight:700, color:G.accent, fontFamily:G.fontDisplay }}>{line.replace('## ','')}</div></div></div>);
       } else if (line.startsWith('### ')) {
-        elements.push(
-          <div key={key++} style={{ marginTop:18, marginBottom:8 }}>
-            <div style={{ fontSize:12, fontWeight:600, color:G.textPrimary, fontFamily:G.fontDisplay, paddingBottom:6, borderBottom:`1px solid ${G.border}` }}>
-              {line.replace('### ', '')}
-            </div>
-          </div>
-        );
-      } else if (line.startsWith('#### ')) {
-        elements.push(
-          <div key={key++} style={{ marginTop:12, marginBottom:4 }}>
-            <span style={{ fontSize:11, fontWeight:600, color:G.blue, fontFamily:G.fontDisplay }}>
-              {line.replace('#### ', '')}
-            </span>
-          </div>
-        );
+        elements.push(<div key={key++} style={{ marginTop:18, marginBottom:8 }}><div style={{ fontSize:12, fontWeight:600, color:G.textPrimary, fontFamily:G.fontDisplay, paddingBottom:6, borderBottom:`1px solid ${G.border}` }}>{line.replace('### ','')}</div></div>);
       } else if (line.startsWith('- ') || line.startsWith('• ')) {
-        const text = line.replace(/^[-•]\s*/, '');
-        elements.push(
-          <div key={key++} style={{ display:"flex", gap:8, marginBottom:4, paddingLeft:8 }}>
-            <span style={{ color:G.accent, flexShrink:0, marginTop:1, fontSize:10 }}>▸</span>
-            <span style={{ fontSize:11, color:G.textSec, lineHeight:1.6 }} dangerouslySetInnerHTML={{ __html: text.replace(/\*\*([^*]+)\*\*/g, `<strong style="color:${G.textPrimary}">$1</strong>`) }}/>
-          </div>
-        );
+        const text = line.replace(/^[-•]\s*/,'');
+        elements.push(<div key={key++} style={{ display:"flex", gap:8, marginBottom:4, paddingLeft:8 }}><span style={{ color:G.accent, flexShrink:0, fontSize:10 }}>▸</span><span style={{ fontSize:11, color:G.textSec, lineHeight:1.6 }} dangerouslySetInnerHTML={{ __html: text.replace(/\*\*([^*]+)\*\*/g,`<strong style="color:${G.textPrimary}">$1</strong>`) }}/></div>);
       } else if (line.trim() === '') {
         elements.push(<div key={key++} style={{ height:6 }}/>);
       } else {
-        elements.push(
-          <p key={key++} style={{ fontSize:11, color:G.textSec, lineHeight:1.7, marginBottom:4 }}
-            dangerouslySetInnerHTML={{ __html: line.replace(/\*\*([^*]+)\*\*/g, `<strong style="color:${G.textPrimary}">$1</strong>`) }}/>
-        );
+        elements.push(<p key={key++} style={{ fontSize:11, color:G.textSec, lineHeight:1.7, marginBottom:4 }} dangerouslySetInnerHTML={{ __html: line.replace(/\*\*([^*]+)\*\*/g,`<strong style="color:${G.textPrimary}">$1</strong>`) }}/>);
       }
     });
-
     return elements;
   }
 
-  // Mini stats for the period overview
-  const miniStats = [
-    { label:"Trades Totales", val:filteredTrades.length, col:G.textPrimary },
-    { label:"Ejecutados", val:stats.execCount, col:G.accent },
-    { label:"Win Rate", val:`${stats.winRate}%`, col:parseFloat(stats.winRate)>=50?G.accent:G.red },
-    { label:"Net PnL", val:fmtD(stats.totalPnl), col:pColor(stats.totalPnl) },
-    { label:"Net R", val:fmtR(parseFloat(stats.totalR)), col:pColor(parseFloat(stats.totalR)) },
-    { label:"Exec. Rate", val:`${stats.execRate}%`, col:parseFloat(stats.execRate)>=80?G.accent:G.yellow },
-  ];
-
   return (
     <div className="fade-up" style={{ maxWidth:900, margin:"0 auto" }}>
-      {/* ── Header ── */}
+      {/* Header */}
       <div style={{ marginBottom:24 }}>
-        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:4 }}>
-          <div>
-            <h1 style={{ fontFamily:G.fontUI, fontSize:22, fontWeight:700, letterSpacing:"-0.03em", marginBottom:2 }}>Reportes</h1>
-            <p style={{ fontSize:11, color:G.textSec }}>Generación de reportes PDF con análisis inteligente de tus datos de trading</p>
-          </div>
-          <div style={{ display:"flex", alignItems:"center", gap:6, background:`${G.accent}18`, border:`1px solid ${G.accent}44`, borderRadius:20, padding:"4px 12px" }}>
-            <span style={{ fontSize:11, color:G.accent, fontWeight:500 }}>✦ Powered by AI</span>
-          </div>
-        </div>
+        <h1 style={{ fontFamily:G.fontUI, fontSize:22, fontWeight:700, letterSpacing:"-0.03em", marginBottom:4 }}>Reportes</h1>
+        <p style={{ fontSize:11, color:G.textSec }}>Genera y descarga reportes PDF de tus datos de trading</p>
       </div>
 
-      {/* ── Configuración ── */}
-      <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:12, padding:20, marginBottom:16 }}>
-        <div style={{ fontSize:9, color:G.textSec, letterSpacing:"0.14em", textTransform:"uppercase", fontFamily:G.fontDisplay, marginBottom:14 }}>
-          1. Seleccionar Período
-        </div>
+      {/* 1. Período */}
+      <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:12, padding:20, marginBottom:14 }}>
+        <div style={{ fontSize:9, color:G.textSec, letterSpacing:"0.14em", textTransform:"uppercase", fontFamily:G.fontDisplay, marginBottom:14 }}>1. Seleccionar Período</div>
         <div style={{ marginBottom:12 }}>
-          <TFSelector value={reportTf} onChange={v => setReportTf(v)} options={REPORT_TF_OPTS}/>
+          <TFSelector value={reportTf} onChange={v => { setReportTf(v); setGeneratedContent(null); }} options={REPORT_TF_OPTS}/>
         </div>
-        <PeriodSelector tf={reportTf} periodId={reportPeriod} onChange={setReportPeriod} trades={trades}/>
-
-        {/* Mini stats preview */}
-        {filteredTrades.length > 0 && (
-          <div style={{ marginTop:14, display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:8 }}>
-            {miniStats.map(s => (
-              <div key={s.label} style={{ background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:8, padding:"8px 10px", textAlign:"center" }}>
-                <div style={{ fontSize:8, color:G.textMuted, textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:3 }}>{s.label}</div>
-                <div style={{ fontSize:13, fontWeight:700, color:s.col, fontFamily:G.fontDisplay }}>{s.val}</div>
-              </div>
-            ))}
-          </div>
-        )}
+        <PeriodSelector tf={reportTf} periodId={reportPeriod} onChange={p => { setReportPeriod(p); setGeneratedContent(null); }} trades={trades}/>
         {!filteredTrades.length && reportPeriod && (
-          <div style={{ marginTop:12, padding:"12px 16px", background:G.redDim, border:`1px solid ${G.red}33`, borderRadius:8, fontSize:11, color:G.red }}>
+          <div style={{ marginTop:12, padding:"10px 14px", background:G.redDim, border:`1px solid ${G.red}33`, borderRadius:8, fontSize:11, color:G.red }}>
             ⚠ No hay trades en el período seleccionado.
           </div>
         )}
       </div>
 
-      {/* ── Tipo de Reporte ── */}
-      <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:12, padding:20, marginBottom:16 }}>
-        <div style={{ fontSize:9, color:G.textSec, letterSpacing:"0.14em", textTransform:"uppercase", fontFamily:G.fontDisplay, marginBottom:14 }}>
-          2. Tipo de Reporte
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+      {/* 2. Tipo de reporte */}
+      <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:12, padding:20, marginBottom:14 }}>
+        <div style={{ fontSize:9, color:G.textSec, letterSpacing:"0.14em", textTransform:"uppercase", fontFamily:G.fontDisplay, marginBottom:14 }}>2. Tipo de Reporte</div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
           {REPORT_TYPES.map(rt => (
             <button key={rt.id} onClick={() => { setSelectedType(rt.id); setGeneratedContent(null); setError(null); }}
-              style={{
-                background: selectedType===rt.id ? `${G.accent}12` : G.surfaceAlt,
-                border: `1px solid ${selectedType===rt.id ? G.accent : G.border}`,
-                borderRadius:10, padding:"14px 16px", cursor:"pointer", textAlign:"left",
-                transition:"all 0.15s",
-              }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+              style={{ background:selectedType===rt.id?`${G.accent}12`:G.surfaceAlt, border:`1px solid ${selectedType===rt.id?G.accent:G.border}`, borderRadius:10, padding:"14px 16px", cursor:"pointer", textAlign:"left", transition:"all 0.15s" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:5 }}>
                 <span style={{ fontSize:18 }}>{rt.icon}</span>
                 <span style={{ fontSize:12, fontWeight:600, color:selectedType===rt.id?G.accent:G.textPrimary, fontFamily:G.fontDisplay }}>{rt.label}</span>
               </div>
@@ -1272,113 +1127,53 @@ function ReportesTab({ trades }) {
         </div>
       </div>
 
-      {/* ── Generar ── */}
-      <div style={{ display:"flex", gap:10, marginBottom:24 }}>
-        <button
-          onClick={handleGenerate}
-          disabled={generating || !filteredTrades.length}
-          style={{
-            flex:1, background:generating ? G.surfaceAlt : G.accent, color:generating ? G.textSec : G.bg,
-            border:"none", borderRadius:10, padding:"14px 24px", cursor:generating||!filteredTrades.length?"not-allowed":"pointer",
-            fontFamily:G.fontDisplay, fontWeight:700, fontSize:13, letterSpacing:"-0.01em",
-            display:"flex", alignItems:"center", justifyContent:"center", gap:8,
-            transition:"all 0.2s", opacity:!filteredTrades.length?0.5:1,
-          }}>
-          {generating ? (
-            <>
-              <span style={{ display:"inline-block", animation:"spin 0.8s linear infinite", fontSize:16 }}>⟳</span>
-              Analizando datos con IA...
-            </>
-          ) : (
-            <>
-              <span style={{ fontSize:16 }}>✦</span>
-              Generar Reporte
-            </>
-          )}
-        </button>
-      </div>
+      {/* 3. Generar */}
+      <button
+        onClick={handleGenerate}
+        disabled={!filteredTrades.length}
+        style={{ width:"100%", background:G.accent, color:G.bg, border:"none", borderRadius:10, padding:"14px 24px", cursor:!filteredTrades.length?"not-allowed":"pointer", fontFamily:G.fontDisplay, fontWeight:700, fontSize:13, display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginBottom:20, opacity:!filteredTrades.length?0.5:1 }}>
+        <span>📄</span> Generar Reporte
+      </button>
 
-      {/* ── Error ── */}
+      {/* Error */}
       {error && (
-        <div style={{ background:G.redDim, border:`1px solid ${G.red}44`, borderRadius:10, padding:"14px 18px", marginBottom:16, fontSize:11, color:G.red }}>
-          {error}
-        </div>
+        <div style={{ background:G.redDim, border:`1px solid ${G.red}44`, borderRadius:10, padding:"14px 18px", marginBottom:16, fontSize:11, color:G.red }}>{error}</div>
       )}
 
-      {/* ── Reporte generado ── */}
+      {/* Reporte generado */}
       {generatedContent && (
         <div ref={previewRef} style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:12, overflow:"hidden", marginBottom:24 }}>
-          {/* Report header */}
-          <div style={{ background:"linear-gradient(135deg, rgba(0,200,150,0.08) 0%, rgba(7,8,12,0) 100%)", borderBottom:`1px solid ${G.border}`, padding:"18px 20px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-            <div>
-              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:4 }}>
-                <span style={{ fontSize:20 }}>{REPORT_TYPES.find(r=>r.id===activeReport)?.icon}</span>
-                <span style={{ fontSize:14, fontWeight:700, color:G.textPrimary, fontFamily:G.fontDisplay }}>
-                  {REPORT_TYPES.find(r=>r.id===activeReport)?.label}
-                </span>
-              </div>
-              <div style={{ fontSize:10, color:G.textSec }}>
-                Período: <span style={{ color:G.accent, fontWeight:500 }}>{periodLabel}</span>
-                &ensp;·&ensp;Generado con IA
+          <div style={{ background:"rgba(0,200,150,0.06)", borderBottom:`1px solid ${G.border}`, padding:"16px 20px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <span style={{ fontSize:20 }}>{REPORT_TYPES.find(r=>r.id===activeReport)?.icon}</span>
+              <div>
+                <div style={{ fontSize:13, fontWeight:700, color:G.textPrimary, fontFamily:G.fontDisplay }}>{REPORT_TYPES.find(r=>r.id===activeReport)?.label}</div>
+                <div style={{ fontSize:10, color:G.textSec }}>Período: <span style={{ color:G.accent }}>{periodLabel}</span> · {filteredTrades.length} registros</div>
               </div>
             </div>
-            <button
-              onClick={handleDownloadPDF}
-              disabled={downloadingPdf}
-              style={{
-                background:downloadingPdf?G.surfaceAlt:G.accent, color:downloadingPdf?G.textSec:G.bg,
-                border:"none", borderRadius:8, padding:"10px 18px", cursor:downloadingPdf?"not-allowed":"pointer",
-                fontFamily:G.fontDisplay, fontWeight:700, fontSize:11,
-                display:"flex", alignItems:"center", gap:6, transition:"all 0.15s",
-              }}>
-              {downloadingPdf ? (
-                <><span style={{ animation:"spin 0.8s linear infinite", display:"inline-block" }}>⟳</span> Generando PDF...</>
-              ) : (
-                <><span>⬇</span> Descargar PDF</>
-              )}
+            <button onClick={handleDownloadPDF} disabled={downloadingPdf}
+              style={{ background:G.accent, color:G.bg, border:"none", borderRadius:8, padding:"9px 18px", cursor:"pointer", fontFamily:G.fontDisplay, fontWeight:700, fontSize:11, display:"flex", alignItems:"center", gap:6 }}>
+              {downloadingPdf ? "⟳ Generando..." : "⬇ Descargar PDF"}
             </button>
           </div>
-
-          {/* Report body */}
           <div style={{ padding:"20px 24px", maxHeight:700, overflowY:"auto" }}>
             {renderContent(generatedContent)}
           </div>
-
-          {/* Footer action */}
-          <div style={{ borderTop:`1px solid ${G.border}`, padding:"14px 20px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-            <span style={{ fontSize:10, color:G.textMuted }}>El análisis fue generado con IA basándose en {filteredTrades.length} registros del período {periodLabel}.</span>
-            <button
-              onClick={handleDownloadPDF}
-              disabled={downloadingPdf}
-              style={{ background:"none", border:`1px solid ${G.accent}`, color:G.accent, borderRadius:7, padding:"8px 16px", cursor:"pointer", fontSize:11, fontFamily:G.fontDisplay, fontWeight:600 }}>
-              {downloadingPdf ? "Generando..." : "⬇ Descargar PDF"}
-            </button>
-          </div>
         </div>
       )}
 
-      {/* ── Instrucciones si no hay reporte ── */}
-      {!generatedContent && !generating && (
-        <div style={{ background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:12, padding:"32px 24px", textAlign:"center" }}>
-          <div style={{ fontSize:36, marginBottom:12 }}>📄</div>
-          <div style={{ fontSize:13, fontWeight:600, color:G.textPrimary, fontFamily:G.fontDisplay, marginBottom:8 }}>
-            Tu reporte aparecerá aquí
-          </div>
-          <div style={{ fontSize:11, color:G.textSec, lineHeight:1.6, maxWidth:400, margin:"0 auto" }}>
-            Selecciona el período y tipo de reporte, luego presiona <strong style={{ color:G.accent }}>Generar Reporte</strong> para que la IA analice tus datos y construya un documento completo.
-          </div>
-          <div style={{ marginTop:16, display:"flex", justifyContent:"center", gap:16, flexWrap:"wrap" }}>
-            {REPORT_TYPES.map(rt => (
-              <div key={rt.id} style={{ fontSize:10, color:G.textMuted, display:"flex", alignItems:"center", gap:4 }}>
-                <span>{rt.icon}</span> {rt.label}
-              </div>
-            ))}
-          </div>
+      {/* Placeholder */}
+      {!generatedContent && (
+        <div style={{ background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:12, padding:"40px 24px", textAlign:"center" }}>
+          <div style={{ fontSize:40, marginBottom:12 }}>📄</div>
+          <div style={{ fontSize:13, fontWeight:600, color:G.textPrimary, fontFamily:G.fontDisplay, marginBottom:8 }}>Tu reporte aparecerá aquí</div>
+          <div style={{ fontSize:11, color:G.textSec, lineHeight:1.6 }}>Selecciona período y tipo, luego presiona <strong style={{ color:G.accent }}>Generar Reporte</strong></div>
         </div>
       )}
     </div>
   );
 }
+
 
 // Opciones estables fuera del componente — un objeto inline dentro del
 // componente sería nuevo en cada render y podría causar re-ejecuciones.
@@ -1409,7 +1204,7 @@ export default function App() {
   const TABS = [
     {id:"dashboard",label:"Dashboard"},
     {id:"trades",   label:"Trades"},
-    {id:"analisis", label:"Analysis"},
+    {id:"analisis", label:"More Stats"},
     {id:"reportes", label:"Reportes"},
   ];
 
@@ -1651,6 +1446,8 @@ export default function App() {
             <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
               <TradeTable trades={[...trades].sort((a,b)=>new Date(b.date)-new Date(a.date))} onDelete={deleteTrade} onEdit={t=>{setEditTrade(t);setAddOpen(false);window.scrollTo({top:0,behavior:'smooth'});}} showDelete={true}/>
             </div>
+            {/* Trading Calendar — debajo de la tabla */}
+            <TradingCalendar trades={trades}/>
           </div>
         )}
 
@@ -1658,7 +1455,7 @@ export default function App() {
         {tab === "analisis" && (
           <div className="fade-up">
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:18 }}>
-              <div><h1 style={{ fontFamily:G.fontUI, fontSize:22, fontWeight:700, letterSpacing:"-0.03em", marginBottom:2 }}>Analysis</h1><p style={{ fontSize:11, color:G.textSec }}>{analTrades.length} registros en el período</p></div>
+              <div><h1 style={{ fontFamily:G.fontUI, fontSize:22, fontWeight:700, letterSpacing:"-0.03em", marginBottom:2 }}>More Stats</h1><p style={{ fontSize:11, color:G.textSec }}>{analTrades.length} registros en el período</p></div>
               <TFSelector value={analTf} onChange={v=>{setAnalTf(v);}} options={ANAL_TF_OPTS}/>
             </div>
             <div style={{ marginBottom:16 }}><PeriodSelector tf={analTf} periodId={analPeriod} onChange={setAnalPeriod} trades={trades}/></div>
@@ -1685,7 +1482,6 @@ export default function App() {
               </div>
             </div>
             {/* Calendar */}
-            <div style={{ marginBottom:12 }}><TradingCalendar trades={analTrades}/></div>
             {/* Mental State Analysis */}
             <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12 }}>
               <SectionHeader title="Mental State vs Performance"/>
