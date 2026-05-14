@@ -43,10 +43,22 @@ const STYLE = `
   @keyframes blink{0%,100%{opacity:1}50%{opacity:0.15}}
   @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+  @keyframes dropDown{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
   .fade-up{animation:fadeUp 0.3s ease forwards}
   .blink{animation:blink 2.5s ease infinite}
   .rh:hover{background:${G.surfaceHov}!important}
   .pill:hover{border-color:${G.borderHov}!important;color:${G.textPrimary}!important}
+  .nav-desktop{display:flex}
+  .nav-mobile{display:none}
+  @media(max-width:640px){
+    .nav-desktop{display:none!important}
+    .nav-mobile{display:flex!important}
+  }
+  .mob-dropdown{animation:dropDown 0.18s ease forwards;position:absolute;top:calc(100% + 6px);right:0;min-width:160px;background:${G.surfaceAlt};border:1px solid ${G.borderHov};border-radius:10px;overflow:hidden;box-shadow:0 10px 36px rgba(0,0,0,0.6);z-index:200}
+  .mob-dropdown button{width:100%;display:block;text-align:left;padding:11px 16px;background:transparent;border:none;border-bottom:1px solid ${G.border};color:${G.textSec};font-size:12px;font-family:${G.fontMono};cursor:pointer;transition:background 0.12s,color 0.12s}
+  .mob-dropdown button:last-child{border-bottom:none}
+  .mob-dropdown button:hover{background:${G.surfaceHov};color:${G.textPrimary}}
+  .mob-dropdown button.active{color:${G.accent};background:${G.accentDim}}
 `;
 
 const pColor = v => v > 0 ? G.accent : v < 0 ? G.red : G.textSec;
@@ -1200,6 +1212,17 @@ export default function App() {
   const [addOpen,    setAddOpen]   = useState(false);
   const [editTrade,  setEditTrade] = useState(null);
   const [opError,    setOpError]   = useState(null);  // errores de CRUD
+  const [mobNavOpen, setMobNavOpen] = useState(false);
+
+  // Close mobile nav when clicking outside
+  useEffect(() => {
+    if (!mobNavOpen) return;
+    const handler = (e) => {
+      if (!e.target.closest('.nav-mobile')) setMobNavOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [mobNavOpen]);
 
   const TABS = [
     {id:"dashboard",label:"Dashboard"},
@@ -1336,7 +1359,8 @@ export default function App() {
           </span>
           {syncing && <span style={{ fontSize:8, color:G.textSec, fontFamily:G.fontMono }}>↻ guardando…</span>}
         </div>
-        <nav style={{ display:"flex", gap:2 }}>
+        {/* Desktop nav */}
+        <nav className="nav-desktop" style={{ gap:2 }}>
           {TABS.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
               style={{
@@ -1350,6 +1374,45 @@ export default function App() {
             </button>
           ))}
         </nav>
+
+        {/* Mobile nav dropdown */}
+        <div className="nav-mobile" style={{ position:"relative", alignItems:"center" }}>
+          <button
+            onClick={() => setMobNavOpen(o => !o)}
+            style={{
+              display:"flex", alignItems:"center", gap:6,
+              background: mobNavOpen ? G.surfaceAlt : "rgba(255,255,255,0.05)",
+              border:`1px solid ${mobNavOpen ? G.borderHov : G.border}`,
+              color: G.textPrimary, borderRadius:7, padding:"5px 11px",
+              cursor:"pointer", fontSize:11, fontFamily:G.fontMono,
+              transition:"all 0.15s", whiteSpace:"nowrap",
+            }}>
+            {TABS.find(t => t.id === tab)?.id === "reportes"
+              ? <span style={{ color:G.accent }}>✦ {TABS.find(t => t.id === tab)?.label}</span>
+              : TABS.find(t => t.id === tab)?.label}
+            <span style={{
+              fontSize:10, color:G.textSec, marginLeft:2,
+              display:"inline-block",
+              transform: mobNavOpen ? "rotate(180deg)" : "rotate(0deg)",
+              transition:"transform 0.18s",
+            }}>▾</span>
+          </button>
+          {mobNavOpen && (
+            <div className="mob-dropdown">
+              {TABS.map(t => (
+                <button
+                  key={t.id}
+                  className={tab === t.id ? "active" : ""}
+                  onClick={() => { setTab(t.id); setMobNavOpen(false); }}>
+                  {t.id === "reportes"
+                    ? <span style={{ display:"flex", alignItems:"center", gap:5 }}><span style={{ fontSize:9 }}>✦</span>{t.label}</span>
+                    : t.label}
+                  {tab === t.id && <span style={{ float:"right", color:G.accent, fontSize:9 }}>●</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </header>
 
       <main style={{ padding:"20px 22px", maxWidth:1380, margin:"0 auto" }}>
