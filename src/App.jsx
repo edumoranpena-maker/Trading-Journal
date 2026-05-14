@@ -503,7 +503,7 @@ function TradeForm({ initial, onSave, onCancel }) {
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(138px,1fr))", gap:10 }}>
         <div><label style={lbl}>Fecha</label><input type="date" value={f.date} onChange={set("date")} style={inp}/></div>
         <div><label style={lbl}>Hora</label><input type="time" value={f.hora} onChange={set("hora")} style={inp}/></div>
-        <div><label style={lbl}>Activo</label><input value={f.pair} onChange={set("pair")} placeholder="EUR/USD, XAU..." style={inp}/></div>
+        <div><label style={lbl}>Activo</label><input value={f.pair} onChange={e=>setF(p=>({...p,pair:e.target.value.toUpperCase()}))} placeholder="EUR/USD, XAU..." style={inp}/></div>
         <div><label style={lbl}>Sesión</label><select value={f.sesion} onChange={set("sesion")} style={inp}>{SESIONES.map(s=><option key={s}>{s}</option>)}</select></div>
         <div><label style={lbl}>Capital ($)</label><input value={f.capital} onChange={set("capital")} placeholder="100" style={inp}/></div>
         <div><label style={lbl}>R:R Obtenido</label><input value={f.rr} onChange={set("rr")} placeholder="2.5 o -1" style={inp}/></div>
@@ -880,7 +880,7 @@ ${setupLines || "- Sin datos suficientes"}
 `;
 }
 
-function buildMentalReport(trades, periodLabel) {
+
   const m = {};
   trades.forEach(t => {
     const s = t.estado_mental;
@@ -1249,10 +1249,10 @@ export default function App() {
   const stats          = useMemo(() => calcStats(filteredTrades), [filteredTrades]);
   const analTrades     = useMemo(() => filterByPeriod(trades,analTf,analPeriod), [trades,analTf,analPeriod]);
 
-  function groupByKey(arr,key){const m={};arr.filter(t=>t.ejecutado).forEach(t=>{const k=t[key]||"Otro";if(!m[k])m[k]={wins:0,total:0,pnl:0,r:0};if(getResult(t)==="Win")m[k].wins++;m[k].total++;m[k].pnl+=t.pnl;m[k].r+=t.rr;});return Object.entries(m).sort(([,a],[,b])=>b.pnl-a.pnl).map(([label,d])=>({label,...d}));}
+  function groupByKey(arr,key,onlyExec=true){const m={};arr.filter(t=>onlyExec?t.ejecutado:true).forEach(t=>{const k=t[key]||"Otro";if(!m[k])m[k]={wins:0,total:0,pnl:0,r:0};if(getResult(t)==="Win")m[k].wins++;m[k].total++;m[k].pnl+=t.pnl;m[k].r+=t.rr;});return Object.entries(m).sort(([,a],[,b])=>b.pnl-a.pnl).map(([label,d])=>({label,...d}));}
 
-  const confAnalysis=useMemo(()=>{const c={cb:{wins:0,total:0,pnl:0,r:0},dc:{wins:0,total:0,pnl:0,r:0},both:{wins:0,total:0,pnl:0,r:0}};analTrades.filter(t=>t.ejecutado).forEach(t=>{const hasCB=(t.confluencias||[]).includes("Candle Bias");const hasDC=(t.confluencias||[]).includes("Daily Cycle");const add=key=>{if(getResult(t)==="Win")c[key].wins++;c[key].total++;c[key].pnl+=t.pnl;c[key].r+=t.rr;};if(hasCB&&hasDC)add("both");else if(hasCB)add("cb");else if(hasDC)add("dc");});return[{label:"Candle Bias",...c.cb},{label:"Daily Cycle",...c.dc},{label:"Ambos",...c.both}].filter(d=>d.total>0);},[analTrades]);
-  const validAnalysis=useMemo(()=>[1,2,3,4].map(n=>{const vt=analTrades.filter(t=>t.ejecutado&&t.validez===n);return{n,total:vt.length,wins:vt.filter(t=>getResult(t)==="Win").length,pnl:vt.reduce((s,t)=>s+t.pnl,0),r:vt.reduce((s,t)=>s+t.rr,0)};}).filter(d=>d.total>0),[analTrades]);
+  const confAnalysis=useMemo(()=>{const c={cb:{wins:0,total:0,pnl:0,r:0},dc:{wins:0,total:0,pnl:0,r:0},both:{wins:0,total:0,pnl:0,r:0}};analTrades.forEach(t=>{const hasCB=(t.confluencias||[]).includes("Candle Bias");const hasDC=(t.confluencias||[]).includes("Daily Cycle");const add=key=>{if(getResult(t)==="Win")c[key].wins++;c[key].total++;c[key].pnl+=t.pnl;c[key].r+=t.rr;};if(hasCB&&hasDC)add("both");else if(hasCB)add("cb");else if(hasDC)add("dc");});return[{label:"Candle Bias",...c.cb},{label:"Daily Cycle",...c.dc},{label:"Ambos",...c.both}].filter(d=>d.total>0);},[analTrades]);
+  const validAnalysis=useMemo(()=>[1,2,3,4].map(n=>{const vt=analTrades.filter(t=>t.validez===n);return{n,total:vt.length,wins:vt.filter(t=>getResult(t)==="Win").length,pnl:vt.reduce((s,t)=>s+t.pnl,0),r:vt.reduce((s,t)=>s+t.rr,0)};}).filter(d=>d.total>0),[analTrades]);
   const dayStats  =useMemo(()=>statsByDayOfWeek(trades),[trades]);
   const weekStats =useMemo(()=>statsByWeekOfMonth(trades),[trades]);
   const monthStats=useMemo(()=>statsByMonth(trades),[trades]);
@@ -1364,8 +1364,14 @@ export default function App() {
                   <p style={{ fontSize:11, color:G.textSec }}>{filteredTrades.length} registros en el período seleccionado</p>
                 </div>
                 <div style={{ textAlign:"right", paddingTop:4 }}>
-                  <div style={{ fontSize:36, fontWeight:800, fontFamily:G.fontUI, color:pColor(stats.totalPnl), lineHeight:1, letterSpacing:"-0.04em" }}>{fmtD(stats.totalPnl)}</div>
-                  <div style={{ fontSize:14, fontFamily:G.fontUI, fontWeight:600, color:pColor(parseFloat(stats.totalR)), letterSpacing:"-0.02em", marginTop:4 }}>{fmtR(stats.totalR)}</div>
+                  {stats.execCount >= 4 ? (
+                    <>
+                      <div style={{ fontSize:36, fontWeight:800, fontFamily:G.fontUI, color:pColor(stats.totalPnl), lineHeight:1, letterSpacing:"-0.04em" }}>{fmtD(stats.totalPnl)}</div>
+                      <div style={{ fontSize:14, fontFamily:G.fontUI, fontWeight:600, color:pColor(parseFloat(stats.totalR)), letterSpacing:"-0.02em", marginTop:4 }}>{fmtR(stats.totalR)}</div>
+                    </>
+                  ) : (
+                    <div style={{ fontSize:11, color:G.textMuted, fontFamily:G.fontMono, marginTop:6 }}>mín. 4 trades ejecutados</div>
+                  )}
                 </div>
               </div>
               <div style={{ marginTop:14, marginBottom:10 }}><TFSelector value={tf} onChange={v=>{setTf(v);}} options={TF_OPTS}/></div>
@@ -1463,7 +1469,7 @@ export default function App() {
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
                 <SectionHeader title="Por Setup"/>
-                <GroupBars data={groupByKey(analTrades,"setup")} barColor={G.accent}/>
+                <GroupBars data={groupByKey(analTrades,"setup",false)} barColor={G.accent}/>
               </div>
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
                 <SectionHeader title="Por Mercado"/>
@@ -1500,8 +1506,8 @@ export default function App() {
                           <td style={{padding:"10px 12px"}}>{r.exec>0?<span style={{color:parseFloat((r.exec/r.total*100).toFixed(0))>=70?G.accent:G.yellow}}>{(r.exec/r.total*100).toFixed(0)}%</span>:<span style={{color:G.textMuted}}>—</span>}</td>
                           <td style={{padding:"10px 12px"}}>{r.winRate!=="—"?<span style={{color:parseFloat(r.winRate)>=50?G.accent:G.red}}>{r.winRate}%</span>:<span style={{color:G.textMuted}}>—</span>}</td>
                           <td style={{padding:"10px 12px",fontFamily:G.fontMono,whiteSpace:"nowrap"}}><span style={{color:pColor(r.netPnl)}}>{fmtD(r.netPnl)}</span></td>
-                          <td style={{padding:"10px 12px",fontFamily:G.fontMono,whiteSpace:"nowrap"}}>{r.missedProfit>0?<span style={{color:G.yellow}}>-{fmtD(r.missedProfit).replace(/^[+-]/,"")}</span>:<span style={{color:G.textMuted}}>—</span>}</td>
-                          <td style={{padding:"10px 12px",fontFamily:G.fontMono,whiteSpace:"nowrap"}}>{avoidedLoss>0?<span style={{color:G.accent}}>+{fmtD(avoidedLoss).replace(/^[+-]/,"")}</span>:<span style={{color:G.textMuted}}>—</span>}</td>
+                          <td style={{padding:"10px 12px",fontFamily:G.fontMono,whiteSpace:"nowrap"}}>{r.missedProfit>0?<span style={{color:G.yellow}}>{fmtD(r.missedProfit).replace(/^[+-]/,"")}</span>:<span style={{color:G.textMuted}}>—</span>}</td>
+                          <td style={{padding:"10px 12px",fontFamily:G.fontMono,whiteSpace:"nowrap"}}>{avoidedLoss>0?<span style={{color:G.accent}}>{fmtD(avoidedLoss).replace(/^[+-]/,"")}</span>:<span style={{color:G.textMuted}}>—</span>}</td>
                         </tr>
                       );
                     })}
