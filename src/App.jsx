@@ -1,4 +1,332 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback, createContext, useContext } from "react";
+
+// ─── Settings persistence ──────────────────────────────────────────────────────
+const SETTINGS_KEY = "tradepulse_settings";
+function loadSettings() {
+  try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; }
+}
+function saveSettings(s) {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch {}
+}
+
+// ─── Settings context ──────────────────────────────────────────────────────────
+const SettingsCtx = createContext({ theme:"dark", lang:"es", T: k => k });
+
+// ─── Translations ──────────────────────────────────────────────────────────────
+const TRANSLATIONS = {
+  // Tabs
+  "Dashboard":    { en:"Dashboard",    es:"Dashboard"    },
+  "Trades":       { en:"Trades",       es:"Trades"       },
+  "More Stats":   { en:"More Stats",   es:"More Stats"   },
+  "Reportes":     { en:"Reports",      es:"Reportes"     },
+  // Dashboard labels
+  "Win Rate":        { en:"Win Rate",        es:"Win Rate"      },
+  "Profit Factor":   { en:"Profit Factor",   es:"Factor Profit" },
+  "Exp. Value":      { en:"Exp. Value",      es:"Val. Esperado" },
+  "Trades Ejec.":    { en:"Exec. Trades",    es:"Trades Ejec."  },
+  "Mejor Racha":     { en:"Best Streak",     es:"Mejor Racha"   },
+  "Peor Racha":      { en:"Worst Streak",    es:"Peor Racha"    },
+  "Max. Drawdown":   { en:"Max. Drawdown",   es:"Max. Drawdown" },
+  "Dominant Emotion":{ en:"Dominant Emotion",es:"Emoción Dominante" },
+  "Curva de Equity": { en:"Equity Curve",    es:"Curva de Equity" },
+  "Execution Rate":  { en:"Execution Rate",  es:"Execution Rate" },
+  "Por Mercado":     { en:"By Market",       es:"Por Mercado"   },
+  "Por Sesión":      { en:"By Session",      es:"Por Sesión"    },
+  // More Stats
+  "Por Setup":       { en:"By Setup",        es:"Por Setup"     },
+  "Por Confluencias":{ en:"By Confluences",  es:"Por Confluencias" },
+  "Por Validez":     { en:"By Validity",     es:"Por Validez"   },
+  "Mental State vs Performance":{ en:"Mental State vs Performance", es:"Estado Mental vs Performance" },
+  "Secuencia de Ejecución — Todos los Meses":{ en:"Execution Sequence — All Months", es:"Secuencia de Ejecución — Todos los Meses" },
+  // Trades tab
+  "registros en":    { en:"records in",      es:"registros en"  },
+  "registros totales":{ en:"total records",  es:"registros totales" },
+  "archivados — ver en More Stats →":{ en:"archived — view in More Stats →", es:"archivados — ver en More Stats →" },
+  "+ Nuevo Trade":   { en:"+ New Trade",     es:"+ Nuevo Trade" },
+  "× Cancelar":      { en:"× Cancel",        es:"× Cancelar"   },
+  "Migrar datos de muestra":{ en:"Migrate sample data", es:"Migrar datos de muestra" },
+  // Form labels
+  "Fecha":           { en:"Date",            es:"Fecha"         },
+  "Hora":            { en:"Time",            es:"Hora"          },
+  "Activo":          { en:"Asset",           es:"Activo"        },
+  "Sesión":          { en:"Session",         es:"Sesión"        },
+  "Capital ($)":     { en:"Capital ($)",     es:"Capital ($)"   },
+  "R:R Obtenido":    { en:"R:R Achieved",    es:"R:R Obtenido"  },
+  "Setup":           { en:"Setup",           es:"Setup"         },
+  "Validez":         { en:"Validity",        es:"Validez"       },
+  "Confluencias":    { en:"Confluences",     es:"Confluencias"  },
+  "Ejecutado":       { en:"Executed",        es:"Ejecutado"     },
+  "Mental State":    { en:"Mental State",    es:"Estado Mental" },
+  "Link TradingView":{ en:"TradingView Link",es:"Link TradingView" },
+  "Guardar":         { en:"Save",            es:"Guardar"       },
+  "Actualizar":      { en:"Update",          es:"Actualizar"    },
+  "Cancelar":        { en:"Cancel",          es:"Cancelar"      },
+  // Time periods
+  "Semana":          { en:"Week",            es:"Semana"        },
+  "Mes":             { en:"Month",           es:"Mes"           },
+  "Trimestre":       { en:"Quarter",         es:"Trimestre"     },
+  "Año":             { en:"Year",            es:"Año"           },
+  "Mensual":         { en:"Monthly",         es:"Mensual"       },
+  "Trimestral":      { en:"Quarterly",       es:"Trimestral"    },
+  "Anual":           { en:"Annual",          es:"Anual"         },
+  // Settings panel
+  "Settings":        { en:"Settings",        es:"Ajustes"       },
+  "Appearance":      { en:"Appearance",      es:"Apariencia"    },
+  "Dark Mode":       { en:"Dark Mode",       es:"Modo Oscuro"   },
+  "Light Mode":      { en:"Light Mode",      es:"Modo Claro"    },
+  "Language":        { en:"Language",        es:"Idioma"        },
+  "Backend":         { en:"Backend",         es:"Backend"       },
+  "Connected":       { en:"Connected",       es:"Conectado"     },
+  // Months EN
+  "Enero":    { en:"January",   es:"Enero"    }, "Febrero":   { en:"February",  es:"Febrero"   },
+  "Marzo":    { en:"March",     es:"Marzo"    }, "Abril":     { en:"April",     es:"Abril"     },
+  "Mayo":     { en:"May",       es:"Mayo"     }, "Junio":     { en:"June",      es:"Junio"     },
+  "Julio":    { en:"July",      es:"Julio"    }, "Agosto":    { en:"August",    es:"Agosto"    },
+  "Septiembre":{ en:"September",es:"Septiembre" }, "Octubre": { en:"October",   es:"Octubre"   },
+  "Noviembre":{ en:"November",  es:"Noviembre" }, "Diciembre":{ en:"December",  es:"Diciembre" },
+  // Days EN
+  "Domingo":    { en:"Sunday",    es:"Domingo"    }, "Lunes":     { en:"Monday",    es:"Lunes"     },
+  "Martes":     { en:"Tuesday",   es:"Martes"     }, "Miércoles": { en:"Wednesday", es:"Miércoles" },
+  "Jueves":     { en:"Thursday",  es:"Jueves"     }, "Viernes":   { en:"Friday",    es:"Viernes"   },
+  "Sábado":     { en:"Saturday",  es:"Sábado"     },
+  // Days short
+  "Dom":{ en:"Sun",es:"Dom" }, "Lun":{ en:"Mon",es:"Lun" }, "Mar":{ en:"Tue",es:"Mar" },
+  "Mié":{ en:"Wed",es:"Mié" }, "Jue":{ en:"Thu",es:"Jue" }, "Vie":{ en:"Fri",es:"Vie" }, "Sáb":{ en:"Sat",es:"Sáb" },
+  // TradeTable headers
+  "Fecha":    { en:"Date",     es:"Fecha"   },
+  "Hora":     { en:"Time",     es:"Hora"    },
+  "Activo":   { en:"Asset",    es:"Activo"  },
+  "Cap":      { en:"Cap",      es:"Cap"     },
+  "Ejec":     { en:"Exec",     es:"Ejec"    },
+  "Valid":    { en:"Valid",    es:"Valid"   },
+  // General
+  "Sin datos": { en:"No data",  es:"Sin datos" },
+  "Sin trades":{ en:"No trades",es:"Sin trades" },
+  "consecutivos ganadores":{ en:"consecutive winners",es:"consecutivos ganadores" },
+  "consecutivos perdedores":{ en:"consecutive losers", es:"consecutivos perdedores" },
+  "por trade": { en:"per trade", es:"por trade" },
+  "inicio del período":{ en:"period start", es:"inicio del período" },
+  "Exec. Rate":{ en:"Exec. Rate", es:"Exec. Rate" },
+  "setups vistos ejecutados en el período":{ en:"setups seen executed in period", es:"setups vistos ejecutados en el período" },
+  "Min. Sample Req.":{ en:"Min. Sample Req.", es:"Min. Muestra Req." },
+  "Día positivo":{ en:"Positive day", es:"Día positivo" },
+  "Día negativo":{ en:"Negative day", es:"Día negativo" },
+  "Breakeven":{ en:"Breakeven", es:"Breakeven" },
+  "Pendiente":{ en:"Pending", es:"Pendiente" },
+  "válidos":{ en:"valid", es:"válidos" },
+  "ejec.":{ en:"exec.", es:"ejec." },
+  "Mejor Semana":{ en:"Best Week",  es:"Mejor Semana" }, "Mejor Día":{ en:"Best Day",   es:"Mejor Día"  },
+  "Mejor Mes":   { en:"Best Month", es:"Mejor Mes"    }, "Peor Semana":{ en:"Worst Week", es:"Peor Semana" },
+  "Peor Día":    { en:"Worst Day",  es:"Peor Día"     }, "Peor Mes":   { en:"Worst Month",es:"Peor Mes"   },
+  "MEJOR / PEOR — basado en win rate histórico (todos los datos)":{ en:"BEST / WORST — based on historical win rate (all data)", es:"MEJOR / PEOR — basado en win rate histórico (todos los datos)" },
+  "trades":{ en:"trades", es:"trades" },
+  "Sin datos de estado mental en este período":{ en:"No mental state data in this period", es:"Sin datos de estado mental en este período" },
+  "Estado Mental":{ en:"Mental State", es:"Estado Mental" },
+  "Total":{ en:"Total", es:"Total" },
+  "Todos los Trades":{ en:"All Trades", es:"Todos los Trades" },
+  "Sin trades en este período":{ en:"No trades in this period", es:"Sin trades en este período" },
+  "Noticias de Alto Impacto":{ en:"High Impact News", es:"Noticias de Alto Impacto" },
+  "Hoy":{ en:"Today", es:"Hoy" },
+  "Sin noticias de alto impacto este día ✓":{ en:"No high-impact news today ✓", es:"Sin noticias de alto impacto este día ✓" },
+  "Cargando noticias…":{ en:"Loading news…", es:"Cargando noticias…" },
+  "No se pudo cargar el calendario. Verifica tu conexión.":{ en:"Could not load calendar. Check your connection.", es:"No se pudo cargar el calendario. Verifica tu conexión." },
+  "Reintentar":{ en:"Retry", es:"Reintentar" },
+  "↻ guardando…":{ en:"↻ saving…", es:"↻ guardando…" },
+  "mín. 4 trades ejecutados":{ en:"min. 4 executed trades", es:"mín. 4 trades ejecutados" },
+  "registros en el período seleccionado":{ en:"records in selected period", es:"registros en el período seleccionado" },
+  "registros en el período":{ en:"records in period", es:"registros en el período" },
+  "Sí":{ en:"Yes", es:"Sí" }, "No":{ en:"No", es:"No" },
+  "— Sin etiquetar —":{ en:"— Unlabeled —", es:"— Sin etiquetar —" },
+  "▲ Positivo":{ en:"▲ Positive", es:"▲ Positivo" }, "▼ Negativo":{ en:"▼ Negative", es:"▼ Negativo" },
+  "No hay trades en el período seleccionado.":{ en:"No trades in selected period.", es:"No hay trades en el período seleccionado." },
+  "Tu reporte aparecerá aquí":{ en:"Your report will appear here", es:"Tu reporte aparecerá aquí" },
+  "Selecciona período y tipo, luego presiona":{ en:"Select period and type, then press", es:"Selecciona período y tipo, luego presiona" },
+  "Generar Reporte":{ en:"Generate Report", es:"Generar Reporte" },
+  "⬇ Descargar PDF":{ en:"⬇ Download PDF", es:"⬇ Descargar PDF" },
+  "⟳ Generando...":{ en:"⟳ Generating...", es:"⟳ Generando..." },
+  "Período:":{ en:"Period:", es:"Período:" },
+  "registros":{ en:"records", es:"registros" },
+  "trades archivados":{ en:"archived trades", es:"trades archivados" },
+  "ver en More Stats →":{ en:"view in More Stats →", es:"ver en More Stats →" },
+  "Sin trades en":{ en:"No trades in", es:"Sin trades en" },
+  "Ver meses anteriores en More Stats":{ en:"View previous months in More Stats", es:"Ver meses anteriores en More Stats" },
+};
+
+// ─── Theme tokens ──────────────────────────────────────────────────────────────
+function makeTokens(theme) {
+  if (theme === "light") return {
+    bg:"#f0f2f7", surface:"#ffffff", surfaceAlt:"#e8eaf2", surfaceHov:"#dde0ec",
+    border:"#d0d4e0", borderHov:"#b0b6cc",
+    accent:"#00a87a", accentDim:"rgba(0,168,122,0.12)",
+    red:"#e02040", redDim:"rgba(224,32,64,0.10)",
+    yellow:"#c9960a", yellowDim:"rgba(201,150,10,0.12)",
+    blue:"#3a6fd4", blueDim:"rgba(58,111,212,0.10)",
+    white:"#1a1f2e", textPrimary:"#1e2433", textSec:"#6b7590", textMuted:"#b0b8cc",
+    fontMono:"'DM Mono', monospace", fontDisplay:"'Syne', sans-serif", fontUI:"'Inter', sans-serif",
+  };
+  return {
+    bg:"#07080c", surface:"#0d0f16", surfaceAlt:"#11141d", surfaceHov:"#151926",
+    border:"#1a1f2e", borderHov:"#252c3f",
+    accent:"#00c896", accentDim:"rgba(0,200,150,0.10)",
+    red:"#f04060", redDim:"rgba(240,64,96,0.10)",
+    yellow:"#e8b320", yellowDim:"rgba(232,179,32,0.12)",
+    blue:"#4f8ef5", blueDim:"rgba(79,142,245,0.10)",
+    white:"#e8edf8", textPrimary:"#d4d9e8", textSec:"#5e6880", textMuted:"#282f42",
+    fontMono:"'DM Mono', monospace", fontDisplay:"'Syne', sans-serif", fontUI:"'Inter', sans-serif",
+  };
+}
+
+function makeStyle(G) { return `
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Inter:wght@400;500;600;700;800;900&family=Syne:wght@400;500;600;700;800&display=swap');
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:${G.bg};color:${G.textPrimary};font-family:${G.fontUI};min-height:100vh;transition:background 0.3s,color 0.3s}
+  ::-webkit-scrollbar{width:3px;height:3px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:${G.border};border-radius:2px}
+  input,select,textarea{font-family:${G.fontUI};background:none;color:${G.textPrimary}}
+  input[type=checkbox]{accent-color:${G.accent};width:14px;height:14px;cursor:pointer}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:0.15}}
+  @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+  @keyframes dropDown{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes settingsIn{from{opacity:0;transform:translateY(-10px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+  .fade-up{animation:fadeUp 0.3s ease forwards}
+  .blink{animation:blink 2.5s ease infinite}
+  .rh:hover{background:${G.surfaceHov}!important}
+  .pill:hover{border-color:${G.borderHov}!important;color:${G.textPrimary}!important}
+  .nav-desktop{display:flex}
+  .nav-mobile{display:none}
+  @media(max-width:640px){
+    .nav-desktop{display:none!important}
+    .nav-mobile{display:flex!important}
+  }
+  .mob-dropdown{animation:dropDown 0.18s ease forwards;position:absolute;top:calc(100% + 6px);right:0;min-width:160px;background:${G.surfaceAlt};border:1px solid ${G.borderHov};border-radius:10px;overflow:hidden;box-shadow:0 10px 36px rgba(0,0,0,0.6);z-index:200}
+  .mob-dropdown button{width:100%;display:block;text-align:left;padding:11px 16px;background:transparent;border:none;border-bottom:1px solid ${G.border};color:${G.textSec};font-size:12px;font-family:${G.fontMono};cursor:pointer;transition:background 0.12s,color 0.12s}
+  .mob-dropdown button:last-child{border-bottom:none}
+  .mob-dropdown button:hover{background:${G.surfaceHov};color:${G.textPrimary}}
+  .mob-dropdown button.active{color:${G.accent};background:${G.accentDim}}
+  .settings-panel{animation:settingsIn 0.22s cubic-bezier(0.16,1,0.3,1) forwards}
+`; }
+
+// ─── Settings Panel Component ──────────────────────────────────────────────────
+function SettingsPanel({ onClose, G }) {
+  const { theme, lang, setTheme, setLang, T } = useContext(SettingsCtx);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onClose]);
+
+  const panelBg = theme === "light"
+    ? "rgba(255,255,255,0.88)"
+    : "rgba(13,15,22,0.82)";
+
+  const sectionLabel = {
+    fontSize: 8, fontFamily: G.fontDisplay, letterSpacing: "0.18em",
+    textTransform: "uppercase", color: G.textSec, marginBottom: 10,
+    paddingBottom: 6, borderBottom: `1px solid ${G.border}`,
+  };
+
+  return (
+    <div ref={ref} className="settings-panel" style={{
+      position:"absolute", top:"calc(100% + 10px)", right:0,
+      width:280, zIndex:300,
+      background: panelBg,
+      backdropFilter: "blur(24px) saturate(180%)",
+      WebkitBackdropFilter: "blur(24px) saturate(180%)",
+      border: `1px solid ${G.borderHov}`,
+      borderRadius: 16,
+      boxShadow: theme === "light"
+        ? "0 8px 40px rgba(0,0,0,0.14), 0 1px 0 rgba(255,255,255,0.8) inset"
+        : "0 8px 40px rgba(0,0,0,0.7), 0 1px 0 rgba(255,255,255,0.04) inset",
+      padding: "18px 16px",
+      overflow: "hidden",
+    }}>
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:18 }}>
+        <span style={{ fontSize:12, fontWeight:700, fontFamily:G.fontDisplay, letterSpacing:"-0.01em", color:G.textPrimary }}>
+          {T("Settings")}
+        </span>
+        <button onClick={onClose} style={{ background:"none", border:"none", color:G.textSec, cursor:"pointer", fontSize:16, lineHeight:1, padding:"2px 4px", borderRadius:4 }}>×</button>
+      </div>
+
+      {/* APPEARANCE */}
+      <div style={{ marginBottom:18 }}>
+        <div style={sectionLabel}>{T("Appearance")}</div>
+        <div style={{ display:"flex", background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:10, padding:3, gap:3 }}>
+          {[
+            { val:"dark",  icon:"🌙", label: T("Dark Mode")  },
+            { val:"light", icon:"☀️", label: T("Light Mode") },
+          ].map(opt => (
+            <button key={opt.val} onClick={() => setTheme(opt.val)} style={{
+              flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:6,
+              background: theme === opt.val ? G.accent : "transparent",
+              border: "none",
+              borderRadius: 8, padding:"8px 6px", cursor:"pointer",
+              color: theme === opt.val ? (opt.val==="light"?"#fff":G.bg) : G.textSec,
+              fontSize:11, fontFamily:G.fontUI, fontWeight: theme===opt.val ? 600 : 400,
+              transition:"all 0.2s",
+            }}>
+              <span style={{ fontSize:13 }}>{opt.icon}</span>
+              <span>{opt.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* LANGUAGE */}
+      <div style={{ marginBottom:18 }}>
+        <div style={sectionLabel}>{T("Language")}</div>
+        <div style={{ display:"flex", background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:10, padding:3, gap:3 }}>
+          {[
+            { val:"es", flag:"🇪🇸", label:"Español" },
+            { val:"en", flag:"🇺🇸", label:"English" },
+          ].map(opt => (
+            <button key={opt.val} onClick={() => setLang(opt.val)} style={{
+              flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:6,
+              background: lang === opt.val ? G.blue : "transparent",
+              border:"none", borderRadius:8, padding:"8px 6px", cursor:"pointer",
+              color: lang === opt.val ? "#fff" : G.textSec,
+              fontSize:11, fontFamily:G.fontUI, fontWeight: lang===opt.val ? 600 : 400,
+              transition:"all 0.2s",
+            }}>
+              <span style={{ fontSize:14 }}>{opt.flag}</span>
+              <span>{opt.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* BACKEND */}
+      <div>
+        <div style={sectionLabel}>{T("Backend")}</div>
+        <div style={{
+          display:"flex", alignItems:"center", justifyContent:"space-between",
+          background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:10, padding:"11px 14px",
+        }}>
+          <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+            <div style={{ width:8, height:8, borderRadius:"50%", background:USE_SUPABASE?G.accent:G.yellow, boxShadow:`0 0 6px ${USE_SUPABASE?G.accent:G.yellow}` }}/>
+            <span style={{ fontSize:12, fontFamily:G.fontMono, color:G.textPrimary, fontWeight:500 }}>
+              {USE_SUPABASE ? "Supabase" : "Demo"}
+            </span>
+          </div>
+          <span style={{
+            fontSize:9, fontFamily:G.fontMono, letterSpacing:"0.08em",
+            color: USE_SUPABASE ? G.accent : G.yellow,
+            background: USE_SUPABASE ? G.accentDim : G.yellowDim,
+            border:`1px solid ${USE_SUPABASE?G.accent:G.yellow}44`,
+            borderRadius:6, padding:"2px 8px",
+          }}>
+            {USE_SUPABASE ? T("Connected") : "LOCAL"}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MODO DE DATOS
@@ -18,48 +346,10 @@ const USE_SUPABASE = true;
 // En modo demo, usamos una implementación local que no toca la red.
 import { useTrades } from "./hooks/useTrades";
 
-// ─── Design tokens ────────────────────────────────────────────────────────────
-const G = {
-  bg:"#07080c", surface:"#0d0f16", surfaceAlt:"#11141d", surfaceHov:"#151926",
-  border:"#1a1f2e", borderHov:"#252c3f",
-  accent:"#00c896", accentDim:"rgba(0,200,150,0.10)",
-  red:"#f04060", redDim:"rgba(240,64,96,0.10)",
-  yellow:"#e8b320", yellowDim:"rgba(232,179,32,0.12)",
-  blue:"#4f8ef5", blueDim:"rgba(79,142,245,0.10)",
-  white:"#e8edf8", textPrimary:"#d4d9e8", textSec:"#5e6880", textMuted:"#282f42",
-  fontMono:"'DM Mono', monospace", fontDisplay:"'Syne', sans-serif", fontUI:"'Inter', sans-serif",
-};
+// ─── Design tokens (dark default — overridden reactively in App) ──────────────
+let G = makeTokens("dark");
 
-const STYLE = `
-  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Inter:wght@400;500;600;700;800;900&family=Syne:wght@400;500;600;700;800&display=swap');
-  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-  html,body{background:${G.bg};color:${G.textPrimary};font-family:${G.fontUI};min-height:100vh}
-  ::-webkit-scrollbar{width:3px;height:3px}
-  ::-webkit-scrollbar-track{background:transparent}
-  ::-webkit-scrollbar-thumb{background:${G.border};border-radius:2px}
-  input,select,textarea{font-family:${G.fontUI};background:none;color:${G.textPrimary}}
-  input[type=checkbox]{accent-color:${G.accent};width:14px;height:14px;cursor:pointer}
-  @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-  @keyframes blink{0%,100%{opacity:1}50%{opacity:0.15}}
-  @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
-  @keyframes dropDown{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
-  .fade-up{animation:fadeUp 0.3s ease forwards}
-  .blink{animation:blink 2.5s ease infinite}
-  .rh:hover{background:${G.surfaceHov}!important}
-  .pill:hover{border-color:${G.borderHov}!important;color:${G.textPrimary}!important}
-  .nav-desktop{display:flex}
-  .nav-mobile{display:none}
-  @media(max-width:640px){
-    .nav-desktop{display:none!important}
-    .nav-mobile{display:flex!important}
-  }
-  .mob-dropdown{animation:dropDown 0.18s ease forwards;position:absolute;top:calc(100% + 6px);right:0;min-width:160px;background:${G.surfaceAlt};border:1px solid ${G.borderHov};border-radius:10px;overflow:hidden;box-shadow:0 10px 36px rgba(0,0,0,0.6);z-index:200}
-  .mob-dropdown button{width:100%;display:block;text-align:left;padding:11px 16px;background:transparent;border:none;border-bottom:1px solid ${G.border};color:${G.textSec};font-size:12px;font-family:${G.fontMono};cursor:pointer;transition:background 0.12s,color 0.12s}
-  .mob-dropdown button:last-child{border-bottom:none}
-  .mob-dropdown button:hover{background:${G.surfaceHov};color:${G.textPrimary}}
-  .mob-dropdown button.active{color:${G.accent};background:${G.accentDim}}
-`;
+
 
 const pColor = v => v > 0 ? G.accent : v < 0 ? G.red : G.textSec;
 
@@ -78,9 +368,14 @@ const SETUP_COLORS = {
   "Continuación Interna": ["#00c896","rgba(0,200,150,0.15)"],
   "LQ Pool":              ["#4fc3f7","rgba(79,195,247,0.15)"],
 };
+const mkTfOpts = T => [{id:"weekly",label:T("Semana")},{id:"monthly",label:T("Mes")},{id:"quarterly",label:T("Trimestre")},{id:"annual",label:T("Año")},{id:"alltime",label:"All‑Time"}];
+const mkAnalTfOpts = T => [{id:"quarterly",label:T("Trimestre")},{id:"annual",label:T("Año")},{id:"alltime",label:"All‑Time"}];
+const mkReportTfOpts = T => [{id:"monthly",label:T("Mensual")},{id:"quarterly",label:T("Trimestral")},{id:"annual",label:T("Anual")}];
+// Keep static versions for legacy usage in non-reactive contexts
 const TF_OPTS      = [{id:"weekly",label:"Semana"},{id:"monthly",label:"Mes"},{id:"quarterly",label:"Trimestre"},{id:"annual",label:"Año"},{id:"alltime",label:"All‑Time"}];
 const ANAL_TF_OPTS = [{id:"quarterly",label:"Trimestre"},{id:"annual",label:"Año"},{id:"alltime",label:"All‑Time"}];
 const REPORT_TF_OPTS = [{id:"monthly",label:"Mensual"},{id:"quarterly",label:"Trimestral"},{id:"annual",label:"Anual"}];
+
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 function detectMercado(pair) {
@@ -479,7 +774,7 @@ function TradeTable({ trades, onDelete, onEdit, showDelete=true }) {
         <tbody>
           {trades.map(t=>(
             <tr key={t.id} className="rh" style={{ borderBottom:`1px solid ${G.border}`, transition:"background 0.1s" }}>
-              <td style={{padding:"8px 10px",color:G.textSec,whiteSpace:"nowrap"}}>{t.date}</td>
+              <td style={{padding:"8px 10px",color:G.textSec,whiteSpace:"nowrap"}}>{(d=>{const[y,m,d2]=d.split("-");return`${d2}/${m}/${y}`;})(t.date)}</td>
               <td style={{padding:"8px 10px",color:G.textSec,fontSize:10}}>{t.hora||"—"}</td>
               <td style={{padding:"8px 10px",fontWeight:500,whiteSpace:"nowrap"}}>{t.pair}</td>
               <td style={{padding:"8px 10px",color:G.textSec,fontSize:10,whiteSpace:"nowrap"}}>{t.sesion}</td>
@@ -503,7 +798,9 @@ function TradeTable({ trades, onDelete, onEdit, showDelete=true }) {
 }
 
 function TradeForm({ initial, onSave, onCancel }) {
-  const empty = { date:"", hora:"09:30", pair:"", sesion:"New York", capital:"", rr:"", setup:"IOF", ejecutado:true, validez:3, confluencias:[], estado_mental:"", link:"" };
+  const { T } = useContext(SettingsCtx);
+  const todayISO = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in local time
+  const empty = { date: todayISO, hora:"09:30", pair:"", sesion:"New York", capital:"", rr:"", setup:"IOF", ejecutado:true, validez:3, confluencias:[], estado_mental:"", link:"" };
   const [f, setF] = useState(initial || empty);
   const inp = { background:G.bg, border:`1px solid ${G.border}`, borderRadius:6, padding:"8px 11px", color:G.textPrimary, fontSize:11, fontFamily:G.fontMono, width:"100%", outline:"none" };
   const lbl = { fontSize:9, color:G.textSec, textTransform:"uppercase", letterSpacing:"0.12em", display:"block", marginBottom:4, fontFamily:G.fontDisplay };
@@ -513,22 +810,22 @@ function TradeForm({ initial, onSave, onCancel }) {
   return (
     <div className="fade-up" style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:12, padding:20, marginBottom:18 }}>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(138px,1fr))", gap:10 }}>
-        <div><label style={lbl}>Fecha</label><input type="date" value={f.date} onChange={set("date")} style={inp}/></div>
-        <div><label style={lbl}>Hora</label><input type="time" value={f.hora} onChange={set("hora")} style={inp}/></div>
-        <div><label style={lbl}>Activo</label><input value={f.pair} onChange={e=>setF(p=>({...p,pair:e.target.value.toUpperCase()}))} placeholder="EUR/USD, XAU..." style={inp}/></div>
-        <div><label style={lbl}>Sesión</label><select value={f.sesion} onChange={set("sesion")} style={inp}>{SESIONES.map(s=><option key={s}>{s}</option>)}</select></div>
-        <div><label style={lbl}>Capital ($)</label><input value={f.capital} onChange={set("capital")} placeholder="100" style={inp}/></div>
-        <div><label style={lbl}>R:R Obtenido</label><input value={f.rr} onChange={set("rr")} placeholder="2.5 o -1" style={inp}/></div>
-        <div><label style={lbl}>Setup</label><select value={f.setup} onChange={set("setup")} style={inp}>{SETUPS.map(s=><option key={s}>{s}</option>)}</select></div>
-        <div><label style={lbl}>Validez — <span style={{color:G.blue}}>{f.validez}/4</span></label><div style={{display:"flex",gap:5,paddingTop:2}}>{[1,2,3,4].map(n=><button key={n} onClick={()=>setF(p=>({...p,validez:n}))} style={{flex:1,padding:"7px 0",background:n<=f.validez?G.blueDim:G.bg,border:`1px solid ${n<=f.validez?G.blue:G.border}`,borderRadius:5,color:n<=f.validez?G.blue:G.textSec,cursor:"pointer",fontSize:11}}>{n}</button>)}</div></div>
-        <div><label style={lbl}>Confluencias</label><div style={{display:"flex",gap:6,paddingTop:2}}>{["Candle Bias","Daily Cycle"].map(c=>{const sel=f.confluencias.includes(c);return(<button key={c} onClick={()=>toggleConf(c)} style={{flex:1,padding:"7px 4px",background:sel?G.blueDim:G.bg,border:`1px solid ${sel?G.blue:G.border}`,borderRadius:5,color:sel?G.blue:G.textSec,cursor:"pointer",fontSize:9,fontFamily:G.fontMono,lineHeight:1.3}}>{c}</button>);})}</div></div>
-        <div style={{display:"flex",flexDirection:"column",gap:4}}><label style={lbl}>Ejecutado</label><div style={{display:"flex",alignItems:"center",gap:8,paddingTop:6}}><input type="checkbox" checked={f.ejecutado} onChange={e=>setF(p=>({...p,ejecutado:e.target.checked}))}/><span style={{fontSize:11,color:f.ejecutado?G.accent:G.textSec}}>{f.ejecutado?"Sí":"No"}</span></div></div>
-        <div><label style={lbl}>Mental State</label><select value={f.estado_mental} onChange={set("estado_mental")} style={inp}><option value="">— Sin etiquetar —</option><optgroup label="▲ Positivo">{MENTAL_STATES.filter(m=>m.polarity==="positive").map(m=><option key={m.value} value={m.value}>{m.value}</option>)}</optgroup><optgroup label="▼ Negativo">{MENTAL_STATES.filter(m=>m.polarity==="negative").map(m=><option key={m.value} value={m.value}>{m.value}</option>)}</optgroup></select></div>
-        <div style={{gridColumn:"span 2"}}><label style={lbl}>Link TradingView</label><input value={f.link} onChange={set("link")} placeholder="https://www.tradingview.com/..." style={inp}/></div>
+        <div><label style={lbl}>{T("Fecha")}</label><input type="date" value={f.date} onChange={set("date")} style={inp}/></div>
+        <div><label style={lbl}>{T("Hora")}</label><input type="time" value={f.hora} onChange={set("hora")} style={inp}/></div>
+        <div><label style={lbl}>{T("Activo")}</label><input value={f.pair} onChange={e=>setF(p=>({...p,pair:e.target.value.toUpperCase()}))} placeholder="EUR/USD, XAU..." style={inp}/></div>
+        <div><label style={lbl}>{T("Sesión")}</label><select value={f.sesion} onChange={set("sesion")} style={inp}>{SESIONES.map(s=><option key={s}>{s}</option>)}</select></div>
+        <div><label style={lbl}>{T("Capital ($)")}</label><input value={f.capital} onChange={set("capital")} placeholder="100" style={inp}/></div>
+        <div><label style={lbl}>{T("R:R Obtenido")}</label><input value={f.rr} onChange={set("rr")} placeholder="2.5 o -1" style={inp}/></div>
+        <div><label style={lbl}>{T("Setup")}</label><select value={f.setup} onChange={set("setup")} style={inp}>{SETUPS.map(s=><option key={s}>{s}</option>)}</select></div>
+        <div><label style={lbl}>{T("Validez")} — <span style={{color:G.blue}}>{f.validez}/4</span></label><div style={{display:"flex",gap:5,paddingTop:2}}>{[1,2,3,4].map(n=><button key={n} onClick={()=>setF(p=>({...p,validez:n}))} style={{flex:1,padding:"7px 0",background:n<=f.validez?G.blueDim:G.bg,border:`1px solid ${n<=f.validez?G.blue:G.border}`,borderRadius:5,color:n<=f.validez?G.blue:G.textSec,cursor:"pointer",fontSize:11}}>{n}</button>)}</div></div>
+        <div><label style={lbl}>{T("Confluencias")}</label><div style={{display:"flex",gap:6,paddingTop:2}}>{["Candle Bias","Daily Cycle"].map(c=>{const sel=f.confluencias.includes(c);return(<button key={c} onClick={()=>toggleConf(c)} style={{flex:1,padding:"7px 4px",background:sel?G.blueDim:G.bg,border:`1px solid ${sel?G.blue:G.border}`,borderRadius:5,color:sel?G.blue:G.textSec,cursor:"pointer",fontSize:9,fontFamily:G.fontMono,lineHeight:1.3}}>{c}</button>);})}</div></div>
+        <div style={{display:"flex",flexDirection:"column",gap:4}}><label style={lbl}>{T("Ejecutado")}</label><div style={{display:"flex",alignItems:"center",gap:8,paddingTop:6}}><input type="checkbox" checked={f.ejecutado} onChange={e=>setF(p=>({...p,ejecutado:e.target.checked}))}/><span style={{fontSize:11,color:f.ejecutado?G.accent:G.textSec}}>{f.ejecutado?T("Sí"):T("No")}</span></div></div>
+        <div><label style={lbl}>{T("Mental State")}</label><select value={f.estado_mental} onChange={set("estado_mental")} style={inp}><option value="">{T("— Sin etiquetar —")}</option><optgroup label={T("▲ Positivo")}>{MENTAL_STATES.filter(m=>m.polarity==="positive").map(m=><option key={m.value} value={m.value}>{m.value}</option>)}</optgroup><optgroup label={T("▼ Negativo")}>{MENTAL_STATES.filter(m=>m.polarity==="negative").map(m=><option key={m.value} value={m.value}>{m.value}</option>)}</optgroup></select></div>
+        <div style={{gridColumn:"span 2"}}><label style={lbl}>{T("Link TradingView")}</label><input value={f.link} onChange={set("link")} placeholder="https://www.tradingview.com/..." style={inp}/></div>
       </div>
       <div style={{ display:"flex", gap:10, marginTop:14 }}>
-        <button onClick={submit} style={{ background:G.accent, color:G.bg, border:"none", borderRadius:7, padding:"10px 22px", cursor:"pointer", fontFamily:G.fontDisplay, fontWeight:700, fontSize:12 }}>{initial?"Actualizar":"Guardar"}</button>
-        <button onClick={onCancel} style={{ background:"none", border:`1px solid ${G.border}`, color:G.textSec, borderRadius:7, padding:"10px 16px", cursor:"pointer", fontSize:11 }}>Cancelar</button>
+        <button onClick={submit} style={{ background:G.accent, color:G.bg, border:"none", borderRadius:7, padding:"10px 22px", cursor:"pointer", fontFamily:G.fontDisplay, fontWeight:700, fontSize:12 }}>{initial?T("Actualizar"):T("Guardar")}</button>
+        <button onClick={onCancel} style={{ background:"none", border:`1px solid ${G.border}`, color:G.textSec, borderRadius:7, padding:"10px 16px", cursor:"pointer", fontSize:11 }}>{T("Cancelar")}</button>
       </div>
     </div>
   );
@@ -1195,6 +1492,28 @@ const TRADES_OPTIONS = USE_SUPABASE
 
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
 export default function App() {
+  // ── Settings (persisted) ─────────────────────────────────────────────────
+  const saved = loadSettings();
+  const [theme, _setTheme] = useState(saved.theme || "dark");
+  const [lang,  _setLang]  = useState(saved.lang  || "es");
+
+  function setTheme(v) { _setTheme(v); saveSettings({ ...loadSettings(), theme:v }); }
+  function setLang(v)  { _setLang(v);  saveSettings({ ...loadSettings(), lang:v  }); }
+
+  // Translation helper
+  const T = useCallback((key) => {
+    const entry = TRANSLATIONS[key];
+    if (!entry) return key;
+    return entry[lang] || entry.es || key;
+  }, [lang]);
+
+  // Reactive design tokens — update G module-level var so all components read it
+  const tokens = useMemo(() => makeTokens(theme), [theme]);
+  // Mutate the module-level G so child components (which close over G) see updates
+  Object.assign(G, tokens);
+
+  const STYLE = useMemo(() => makeStyle(tokens), [tokens]);
+
   const {
     trades, loading, error, syncing,
     addTrade:    addTradeAsync,
@@ -1213,6 +1532,7 @@ export default function App() {
   const [editTrade,  setEditTrade] = useState(null);
   const [opError,    setOpError]   = useState(null);  // errores de CRUD
   const [mobNavOpen, setMobNavOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Close mobile nav when clicking outside
   useEffect(() => {
@@ -1225,10 +1545,10 @@ export default function App() {
   }, [mobNavOpen]);
 
   const TABS = [
-    {id:"dashboard",label:"Dashboard"},
-    {id:"trades",   label:"Trades"},
-    {id:"analisis", label:"More Stats"},
-    {id:"reportes", label:"Reportes"},
+    {id:"dashboard",label:T("Dashboard")},
+    {id:"trades",   label:T("Trades")},
+    {id:"analisis", label:T("More Stats")},
+    {id:"reportes", label:T("Reportes")},
   ];
 
   // Sincroniza el período seleccionado cuando cambia el timeframe
@@ -1343,74 +1663,95 @@ export default function App() {
   }
 
   return (
-    <div style={{ minHeight:"100vh", background:G.bg }}>
+    <SettingsCtx.Provider value={{ theme, lang, setTheme, setLang, T }}>
+    <div style={{ minHeight:"100vh", background:G.bg, transition:"background 0.3s" }}>
       <style>{STYLE}</style>
 
       {/* ── HEADER ── */}
-      <header style={{ borderBottom:`1px solid ${G.border}`, padding:"0 22px", display:"flex", alignItems:"center", justifyContent:"space-between", height:50, position:"sticky", top:0, background:G.bg, zIndex:50 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+      <header style={{ borderBottom:`1px solid ${G.border}`, padding:"0 22px", display:"flex", alignItems:"center", justifyContent:"space-between", height:50, position:"sticky", top:0, background:G.bg, zIndex:50, transition:"background 0.3s,border-color 0.3s" }}>
+        {/* Logo left */}
+        <div style={{ display:"flex", alignItems:"center", gap:12, flex:"0 0 auto" }}>
           <div className="blink" style={{ width:6, height:6, borderRadius:"50%", background:USE_SUPABASE ? G.accent : G.yellow }}/>
-          <span style={{ fontFamily:G.fontDisplay, fontWeight:800, fontSize:14, letterSpacing:"-0.03em" }}>TRADE<span style={{ color:G.accent }}>PULSE</span></span>
+          <span style={{ fontFamily:G.fontDisplay, fontWeight:800, fontSize:14, letterSpacing:"-0.03em", color:G.textPrimary }}>TRADE<span style={{ color:G.accent }}>PULSE</span></span>
           <span style={{ color:G.border }}>|</span>
           <span style={{ fontSize:9, color:G.textSec, letterSpacing:"0.14em" }}>JOURNAL PRO</span>
-          {/* Indicador de modo */}
-          <span style={{ fontSize:8, padding:"2px 7px", borderRadius:10, background: USE_SUPABASE ? `${G.accent}20` : `${G.yellow}20`, color: USE_SUPABASE ? G.accent : G.yellow, border:`1px solid ${USE_SUPABASE ? G.accent : G.yellow}44`, fontFamily:G.fontMono }}>
-            {USE_SUPABASE ? "● SUPABASE" : "◌ DEMO"}
-          </span>
-          {syncing && <span style={{ fontSize:8, color:G.textSec, fontFamily:G.fontMono }}>↻ guardando…</span>}
+          {syncing && <span style={{ fontSize:8, color:G.textSec, fontFamily:G.fontMono }}>{T("↻ guardando…")}</span>}
         </div>
-        {/* Desktop nav */}
-        <nav className="nav-desktop" style={{ gap:2 }}>
-          {TABS.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              style={{
-                background:tab===t.id?G.surfaceAlt:"none",
-                border:`1px solid ${tab===t.id?G.border:"transparent"}`,
-                color:tab===t.id?G.textPrimary:G.textSec,
-                borderRadius:6, padding:"5px 13px", cursor:"pointer", fontSize:10, fontFamily:G.fontMono, transition:"all 0.15s",
-                ...(t.id==="reportes"&&tab!=="reportes" ? { color:G.accent } : {}),
-              }}>
-              {t.id==="reportes" ? <span style={{ display:"flex", alignItems:"center", gap:4 }}><span style={{ fontSize:9 }}>✦</span>{t.label}</span> : t.label}
-            </button>
-          ))}
-        </nav>
 
-        {/* Mobile nav dropdown */}
-        <div className="nav-mobile" style={{ position:"relative", alignItems:"center" }}>
+        {/* Center nav area */}
+        <div style={{ flex:1, display:"flex", justifyContent:"center", alignItems:"center", padding:"0 12px" }}>
+          {/* Desktop nav */}
+          <nav className="nav-desktop" style={{ gap:2 }}>
+            {TABS.map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                style={{
+                  background:tab===t.id?G.surfaceAlt:"none",
+                  border:`1px solid ${tab===t.id?G.border:"transparent"}`,
+                  color:tab===t.id?G.textPrimary:G.textSec,
+                  borderRadius:6, padding:"5px 13px", cursor:"pointer", fontSize:10, fontFamily:G.fontMono, transition:"all 0.15s",
+                  ...(t.id==="reportes"&&tab!=="reportes" ? { color:G.accent } : {}),
+                }}>
+                {t.id==="reportes" ? <span style={{ display:"flex", alignItems:"center", gap:4 }}><span style={{ fontSize:9 }}>✦</span>{t.label}</span> : t.label}
+              </button>
+            ))}
+          </nav>
+          {/* Mobile nav dropdown */}
+          <div className="nav-mobile" style={{ position:"relative", alignItems:"center" }}>
+            <button
+              onClick={() => setMobNavOpen(o => !o)}
+              style={{
+                display:"flex", alignItems:"center", gap:6,
+                background: mobNavOpen ? G.surfaceAlt : "rgba(255,255,255,0.05)",
+                border:`1px solid ${mobNavOpen ? G.borderHov : G.border}`,
+                color: G.textPrimary, borderRadius:7, padding:"5px 11px",
+                cursor:"pointer", fontSize:11, fontFamily:G.fontMono,
+                transition:"all 0.15s", whiteSpace:"nowrap",
+              }}>
+              {TABS.find(t => t.id === tab)?.id === "reportes"
+                ? <span style={{ color:G.accent }}>✦ {TABS.find(t => t.id === tab)?.label}</span>
+                : TABS.find(t => t.id === tab)?.label}
+              <span style={{
+                fontSize:10, color:G.textSec, marginLeft:2,
+                display:"inline-block",
+                transform: mobNavOpen ? "rotate(180deg)" : "rotate(0deg)",
+                transition:"transform 0.18s",
+              }}>▾</span>
+            </button>
+            {mobNavOpen && (
+              <div className="mob-dropdown">
+                {TABS.map(t => (
+                  <button
+                    key={t.id}
+                    className={tab === t.id ? "active" : ""}
+                    onClick={() => { setTab(t.id); setMobNavOpen(false); }}>
+                    {t.id === "reportes"
+                      ? <span style={{ display:"flex", alignItems:"center", gap:5 }}><span style={{ fontSize:9 }}>✦</span>{t.label}</span>
+                      : t.label}
+                    {tab === t.id && <span style={{ float:"right", color:G.accent, fontSize:9 }}>●</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Settings gear — far right */}
+        <div style={{ flex:"0 0 auto", position:"relative" }}>
           <button
-            onClick={() => setMobNavOpen(o => !o)}
+            onClick={() => setSettingsOpen(o => !o)}
             style={{
-              display:"flex", alignItems:"center", gap:6,
-              background: mobNavOpen ? G.surfaceAlt : "rgba(255,255,255,0.05)",
-              border:`1px solid ${mobNavOpen ? G.borderHov : G.border}`,
-              color: G.textPrimary, borderRadius:7, padding:"5px 11px",
-              cursor:"pointer", fontSize:11, fontFamily:G.fontMono,
-              transition:"all 0.15s", whiteSpace:"nowrap",
-            }}>
-            {TABS.find(t => t.id === tab)?.id === "reportes"
-              ? <span style={{ color:G.accent }}>✦ {TABS.find(t => t.id === tab)?.label}</span>
-              : TABS.find(t => t.id === tab)?.label}
-            <span style={{
-              fontSize:10, color:G.textSec, marginLeft:2,
-              display:"inline-block",
-              transform: mobNavOpen ? "rotate(180deg)" : "rotate(0deg)",
-              transition:"transform 0.18s",
-            }}>▾</span>
+              background: settingsOpen ? G.accentDim : "none",
+              border:`1px solid ${settingsOpen ? G.accent+"66" : "transparent"}`,
+              borderRadius:8, width:34, height:34, cursor:"pointer",
+              display:"flex", alignItems:"center", justifyContent:"center",
+              fontSize:16, transition:"all 0.18s",
+              color: G.textSec,
+            }}
+            title={T("Settings")}>
+            ⚙️
           </button>
-          {mobNavOpen && (
-            <div className="mob-dropdown">
-              {TABS.map(t => (
-                <button
-                  key={t.id}
-                  className={tab === t.id ? "active" : ""}
-                  onClick={() => { setTab(t.id); setMobNavOpen(false); }}>
-                  {t.id === "reportes"
-                    ? <span style={{ display:"flex", alignItems:"center", gap:5 }}><span style={{ fontSize:9 }}>✦</span>{t.label}</span>
-                    : t.label}
-                  {tab === t.id && <span style={{ float:"right", color:G.accent, fontSize:9 }}>●</span>}
-                </button>
-              ))}
-            </div>
+          {settingsOpen && (
+            <SettingsPanel onClose={() => setSettingsOpen(false)} G={G}/>
           )}
         </div>
       </header>
@@ -1423,8 +1764,8 @@ export default function App() {
             <div style={{ marginBottom:20 }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:4 }}>
                 <div>
-                  <h1 style={{ fontFamily:G.fontUI, fontSize:22, fontWeight:700, letterSpacing:"-0.03em", marginBottom:2 }}>Dashboard</h1>
-                  <p style={{ fontSize:11, color:G.textSec }}>{filteredTrades.length} registros en el período seleccionado</p>
+                  <h1 style={{ fontFamily:G.fontUI, fontSize:22, fontWeight:700, letterSpacing:"-0.03em", marginBottom:2 }}>{T("Dashboard")}</h1>
+                  <p style={{ fontSize:11, color:G.textSec }}>{filteredTrades.length} {T("registros en el período seleccionado")}</p>
                 </div>
                 <div style={{ textAlign:"right", paddingTop:4 }}>
                   {stats.execCount >= 4 ? (
@@ -1433,7 +1774,7 @@ export default function App() {
                       <div style={{ fontSize:14, fontFamily:G.fontUI, fontWeight:600, color:pColor(parseFloat(stats.totalR)), letterSpacing:"-0.02em", marginTop:4 }}>{fmtR(stats.totalR)}</div>
                     </>
                   ) : (
-                    <div style={{ fontSize:11, color:G.textMuted, fontFamily:G.fontMono, marginTop:6 }}>mín. 4 trades ejecutados</div>
+                    <div style={{ fontSize:11, color:G.textMuted, fontFamily:G.fontMono, marginTop:6 }}>{T("mín. 4 trades ejecutados")}</div>
                   )}
                 </div>
               </div>
@@ -1441,45 +1782,45 @@ export default function App() {
               <PeriodSelector tf={tf} periodId={tfPeriod} onChange={setTfPeriod} trades={trades}/>
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(145px,1fr))", gap:10, marginBottom:14 }}>
-              <KpiCard label="Win Rate"     val={`${stats.winRate}%`}  col={G.accent} sub={`${stats.wins}W · ${stats.losses}L · ${stats.bes}BE`}/>
-              <KpiCard label="Profit Factor" val={stats.profitFactor} col={parseFloat(stats.profitFactor)>=1.5?G.accent:parseFloat(stats.profitFactor)>=1?G.yellow:G.red}/>
-              <KpiCard label="Exp. Value"   val={`${stats.expValue}R`} col={parseFloat(stats.expValue)>0?G.accent:G.red} tag="por trade"/>
-              <KpiCard label="Trades Ejec." val={stats.total}          sub={`Exec. Rate ${stats.execRate}%`}/>
-              <KpiCard label="Mejor Racha"  val={stats.bestStreak>0?`${stats.bestStreak} trades`:"—"}  col={G.accent} sub="consecutivos ganadores"/>
-              <KpiCard label="Peor Racha"   val={stats.worstStreak<0?`${Math.abs(stats.worstStreak)} trades`:"—"} col={G.red} sub="consecutivos perdedores"/>
+              <KpiCard label={T("Win Rate")}     val={`${stats.winRate}%`}  col={G.accent} sub={`${stats.wins}W · ${stats.losses}L · ${stats.bes}BE`}/>
+              <KpiCard label={T("Profit Factor")} val={stats.profitFactor} col={parseFloat(stats.profitFactor)>=1.5?G.accent:parseFloat(stats.profitFactor)>=1?G.yellow:G.red}/>
+              <KpiCard label={T("Exp. Value")}   val={`${stats.expValue}R`} col={parseFloat(stats.expValue)>0?G.accent:G.red} tag={T("por trade")}/>
+              <KpiCard label={T("Trades Ejec.")} val={stats.total}          sub={`Exec. Rate ${stats.execRate}%`}/>
+              <KpiCard label={T("Mejor Racha")}  val={stats.bestStreak>0?`${stats.bestStreak} ${T("trades")}`:"—"}  col={G.accent} sub={T("consecutivos ganadores")}/>
+              <KpiCard label={T("Peor Racha")}   val={stats.worstStreak<0?`${Math.abs(stats.worstStreak)} ${T("trades")}`:"—"} col={G.red} sub={T("consecutivos perdedores")}/>
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:"15px 17px", display:"flex", flexDirection:"column", gap:6 }}>
-                <span style={{ fontSize:9, color:G.textSec, letterSpacing:"0.13em", textTransform:"uppercase", fontFamily:G.fontDisplay }}>Dominant Emotion</span>
-                {dominantEmotion?(<><MentalStateChip val={dominantEmotion.state} size="lg"/><span style={{fontSize:10,color:G.textSec}}>{dominantEmotion.count} de {dominantEmotion.total} trades</span></>):<span style={{fontSize:13,color:G.textMuted}}>Sin datos</span>}
+                <span style={{ fontSize:9, color:G.textSec, letterSpacing:"0.13em", textTransform:"uppercase", fontFamily:G.fontDisplay }}>{T("Dominant Emotion")}</span>
+                {dominantEmotion?(<><MentalStateChip val={dominantEmotion.state} size="lg"/><span style={{fontSize:10,color:G.textSec}}>{dominantEmotion.count} de {dominantEmotion.total} {T("trades")}</span></>):<span style={{fontSize:13,color:G.textMuted}}>{T("Sin datos")}</span>}
               </div>
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:"15px 17px", display:"flex", flexDirection:"column", gap:4 }}>
-                <span style={{ fontSize:9, color:G.textSec, letterSpacing:"0.13em", textTransform:"uppercase", fontFamily:G.fontDisplay }}>Max. Drawdown</span>
+                <span style={{ fontSize:9, color:G.textSec, letterSpacing:"0.13em", textTransform:"uppercase", fontFamily:G.fontDisplay }}>{T("Max. Drawdown")}</span>
                 <span style={{ fontSize:21, fontWeight:700, fontFamily:G.fontDisplay, color:parseFloat(stats.maxDD)>0?G.red:G.textMuted, lineHeight:1.1 }}>{parseFloat(stats.maxDD)>0?`-$${stats.maxDD}`:"—"}</span>
                 <span style={{ fontSize:10, color:G.textSec }}>{fmtR(-Math.abs(parseFloat(stats.maxDDR)))}</span>
               </div>
             </div>
             <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12 }}>
-              <SectionHeader title="Curva de Equity"/>
+              <SectionHeader title={T("Curva de Equity")}/>
               <Sparkline trades={filteredTrades} H={150}/>
-              <div style={{ display:"flex", justifyContent:"space-between", marginTop:8, fontSize:10, color:G.textSec }}><span>inicio del período</span><span style={{color:pColor(stats.totalPnl)}}>{fmtD(stats.totalPnl)} · {fmtR(stats.totalR)}</span></div>
+              <div style={{ display:"flex", justifyContent:"space-between", marginTop:8, fontSize:10, color:G.textSec }}><span>{T("inicio del período")}</span><span style={{color:pColor(stats.totalPnl)}}>{fmtD(stats.totalPnl)} · {fmtR(stats.totalR)}</span></div>
             </div>
             <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12 }}>
-              <SectionHeader title="Execution Rate"/>
+              <SectionHeader title={T("Execution Rate")}/>
               <div style={{ display:"flex", alignItems:"center", gap:32 }}>
                 <DonutChart exec={stats.execCount} nonExec={stats.nonExecCount}/>
-                <div style={{ fontSize:10, color:G.textSec }}>{stats.execRate}% de setups vistos ejecutados en el período</div>
+                <div style={{ fontSize:10, color:G.textSec }}>{stats.execRate}% {T("setups vistos ejecutados en el período")}</div>
               </div>
             </div>
             <div style={{ marginBottom:12 }}>{(()=>{let seqYear,seqMonth;if(tf==="monthly"&&tfPeriod){const[yr,mo]=tfPeriod.split("-").map(Number);seqYear=yr;seqMonth=mo;}else if(tf==="weekly"&&tfPeriod){const d=new Date(tfPeriod);seqYear=d.getFullYear();seqMonth=d.getMonth();}else if(tf==="quarterly"&&tfPeriod){const[yr,qStr]=tfPeriod.split("-Q");seqYear=parseInt(yr);seqMonth=(parseInt(qStr)-1)*3;}else{const sorted=[...filteredTrades].sort((a,b)=>new Date(b.date)-new Date(a.date));const latest=sorted.length?new Date(sorted[0].date):new Date("2026-05-07");seqYear=latest.getFullYear();seqMonth=latest.getMonth();}return<ExecSequence trades={filteredTrades} year={seqYear} month={seqMonth}/>;})()}</div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
-                <SectionHeader title="Por Mercado"/>
-                {!marketStats.length&&<div style={{color:G.textMuted,fontSize:11}}>Sin datos</div>}
-                {marketStats.map(({m,pnl,r,wr,len})=>(<div key={m} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:`1px solid ${G.border}`}}><div><div style={{fontSize:12,fontWeight:500,fontFamily:G.fontDisplay}}>{m}</div><div style={{fontSize:10,color:G.textSec}}>{len} trades · {wr}% WR</div></div><div style={{textAlign:"right"}}><div style={{fontSize:13,fontWeight:700,color:pColor(pnl),fontFamily:G.fontDisplay}}>{fmtD(pnl)}</div><div style={{fontSize:10,color:pColor(r)}}>{fmtR(r)}</div></div></div>))}
+                <SectionHeader title={T("Por Mercado")}/>
+                {!marketStats.length&&<div style={{color:G.textMuted,fontSize:11}}>{T("Sin datos")}</div>}
+                {marketStats.map(({m,pnl,r,wr,len})=>(<div key={m} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:`1px solid ${G.border}`}}><div><div style={{fontSize:12,fontWeight:500,fontFamily:G.fontDisplay}}>{m}</div><div style={{fontSize:10,color:G.textSec}}>{len} {T("trades")} · {wr}% WR</div></div><div style={{textAlign:"right"}}><div style={{fontSize:13,fontWeight:700,color:pColor(pnl),fontFamily:G.fontDisplay}}>{fmtD(pnl)}</div><div style={{fontSize:10,color:pColor(r)}}>{fmtR(r)}</div></div></div>))}
               </div>
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
-                <SectionHeader title="Por Sesión"/>
-                {!sesionStats.length&&<div style={{color:G.textMuted,fontSize:11}}>Sin datos</div>}
-                {sesionStats.map(({s,pnl,r,wr,len})=>(<div key={s} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:`1px solid ${G.border}`}}><div><div style={{fontSize:12,fontWeight:500,fontFamily:G.fontDisplay}}>{s}</div><div style={{fontSize:10,color:G.textSec}}>{len} trades · {wr}% WR</div></div><div style={{textAlign:"right"}}><div style={{fontSize:13,fontWeight:700,color:pColor(pnl),fontFamily:G.fontDisplay}}>{fmtD(pnl)}</div><div style={{fontSize:10,color:pColor(r)}}>{fmtR(r)}</div></div></div>))}
+                <SectionHeader title={T("Por Sesión")}/>
+                {!sesionStats.length&&<div style={{color:G.textMuted,fontSize:11}}>{T("Sin datos")}</div>}
+                {sesionStats.map(({s,pnl,r,wr,len})=>(<div key={s} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:`1px solid ${G.border}`}}><div><div style={{fontSize:12,fontWeight:500,fontFamily:G.fontDisplay}}>{s}</div><div style={{fontSize:10,color:G.textSec}}>{len} {T("trades")} · {wr}% WR</div></div><div style={{textAlign:"right"}}><div style={{fontSize:13,fontWeight:700,color:pColor(pnl),fontFamily:G.fontDisplay}}>{fmtD(pnl)}</div><div style={{fontSize:10,color:pColor(r)}}>{fmtR(r)}</div></div></div>))}
               </div>
             </div>
             <EconomicCalendar/>
@@ -1489,19 +1830,28 @@ export default function App() {
         {/* ══════════ TRADES ═══════════════════════════════════════════════ */}
         {tab === "trades" && (
           <div className="fade-up">
+            {(()=>{
+              const now = new Date();
+              const curY = now.getFullYear(), curM = now.getMonth();
+              const thisMonthTrades = [...trades]
+                .filter(t => { const d = new Date(t.date); return d.getFullYear()===curY && d.getMonth()===curM; })
+                .sort((a,b) => new Date(b.date)-new Date(a.date));
+              const archivedCount = trades.length - thisMonthTrades.length;
+              const monthLabel = `${MESES_ES[curM]} ${curY}`;
+              return (<>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:18 }}>
               <div>
-                <h1 style={{ fontFamily:G.fontUI, fontSize:22, fontWeight:700, letterSpacing:"-0.03em", marginBottom:2 }}>Trades</h1>
-                <p style={{ fontSize:11, color:G.textSec }}>{trades.length} registros totales {USE_SUPABASE ? "· Supabase" : "· Demo"}</p>
+                <h1 style={{ fontFamily:G.fontUI, fontSize:22, fontWeight:700, letterSpacing:"-0.03em", marginBottom:2 }}>{T("Trades")}</h1>
+                <p style={{ fontSize:11, color:G.textSec }}>{thisMonthTrades.length} {T("registros en")} {monthLabel} {USE_SUPABASE ? "· Supabase" : "· Demo"}</p>
               </div>
               <div style={{ display:"flex", gap:8, alignItems:"center" }}>
                 {USE_SUPABASE && trades.length === 0 && (
                   <button onClick={() => seedFromSample(SAMPLE)}
                     style={{ background:`${G.yellow}20`, border:`1px solid ${G.yellow}66`, color:G.yellow, borderRadius:7, padding:"8px 14px", cursor:"pointer", fontSize:10, fontFamily:G.fontMono }}>
-                    ↑ Migrar datos de muestra
+                    ↑ {T("Migrar datos de muestra")}
                   </button>
                 )}
-                <button onClick={()=>{setAddOpen(p=>!p);setEditTrade(null);}} style={{ background:G.accent, color:G.bg, border:"none", borderRadius:8, padding:"9px 18px", cursor:"pointer", fontFamily:G.fontDisplay, fontWeight:700, fontSize:12 }}>{addOpen?"× Cancelar":"+ Nuevo Trade"}</button>
+                <button onClick={()=>{setAddOpen(p=>!p);setEditTrade(null);}} style={{ background:G.accent, color:G.bg, border:"none", borderRadius:8, padding:"9px 18px", cursor:"pointer", fontFamily:G.fontDisplay, fontWeight:700, fontSize:12 }}>{addOpen?T("× Cancelar"):T("+ Nuevo Trade")}</button>
               </div>
             </div>
             {opError && (
@@ -1513,10 +1863,31 @@ export default function App() {
             {addOpen&&!editTrade&&<TradeForm onSave={addTrade} onCancel={()=>setAddOpen(false)}/>}
             {editTrade&&<TradeForm initial={editTrade} onSave={updateTrade} onCancel={()=>setEditTrade(null)}/>}
             <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
-              <TradeTable trades={[...trades].sort((a,b)=>new Date(b.date)-new Date(a.date))} onDelete={deleteTrade} onEdit={t=>{setEditTrade(t);setAddOpen(false);window.scrollTo({top:0,behavior:'smooth'});}} showDelete={true}/>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+                <div style={{ fontSize:9, color:G.textSec, letterSpacing:"0.14em", textTransform:"uppercase", fontFamily:G.fontDisplay }}>
+                  {monthLabel}
+                </div>
+                {archivedCount > 0 && (
+                  <button onClick={() => setTab("analisis")}
+                    style={{ background:`${G.blue}18`, border:`1px solid ${G.blue}44`, color:G.blue, borderRadius:6, padding:"4px 11px", cursor:"pointer", fontSize:9, fontFamily:G.fontMono, display:"flex", alignItems:"center", gap:5 }}>
+                    📦 {archivedCount} {T("trades archivados")} — {T("ver en More Stats →")}
+                  </button>
+                )}
+              </div>
+              <TradeTable trades={thisMonthTrades} onDelete={deleteTrade} onEdit={t=>{setEditTrade(t);setAddOpen(false);window.scrollTo({top:0,behavior:'smooth'});}} showDelete={true}/>
+              {!thisMonthTrades.length && archivedCount > 0 && (
+                <div style={{ textAlign:"center", padding:"28px 0", color:G.textMuted, fontSize:12 }}>
+                  {T("Sin trades en")} {monthLabel}.{" "}
+                  <button onClick={() => setTab("analisis")} style={{ background:"none", border:"none", color:G.blue, cursor:"pointer", fontSize:12, textDecoration:"underline" }}>
+                    {T("Ver meses anteriores en More Stats")}
+                  </button>
+                </div>
+              )}
             </div>
             {/* Trading Calendar — debajo de la tabla */}
             <TradingCalendar trades={trades}/>
+              </>);
+            })()}
           </div>
         )}
 
@@ -1524,40 +1895,40 @@ export default function App() {
         {tab === "analisis" && (
           <div className="fade-up">
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:18 }}>
-              <div><h1 style={{ fontFamily:G.fontUI, fontSize:22, fontWeight:700, letterSpacing:"-0.03em", marginBottom:2 }}>More Stats</h1><p style={{ fontSize:11, color:G.textSec }}>{analTrades.length} registros en el período</p></div>
-              <TFSelector value={analTf} onChange={v=>{setAnalTf(v);}} options={ANAL_TF_OPTS}/>
+              <div><h1 style={{ fontFamily:G.fontUI, fontSize:22, fontWeight:700, letterSpacing:"-0.03em", marginBottom:2 }}>{T("More Stats")}</h1><p style={{ fontSize:11, color:G.textSec }}>{analTrades.length} {T("registros en el período")}</p></div>
+              <TFSelector value={analTf} onChange={v=>{setAnalTf(v);}} options={mkAnalTfOpts(T)}/>
             </div>
             <div style={{ marginBottom:16 }}><PeriodSelector tf={analTf} periodId={analPeriod} onChange={setAnalPeriod} trades={trades}/></div>
             {/* Setup Performance */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
-                <SectionHeader title="Por Setup"/>
+                <SectionHeader title={T("Por Setup")}/>
                 <GroupBars data={groupByKey(analTrades,"setup",false)} barColor={G.accent}/>
               </div>
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
-                <SectionHeader title="Por Mercado"/>
+                <SectionHeader title={T("Por Mercado")}/>
                 <GroupBars data={groupByKey(analTrades,"mercado")} barColor={G.blue}/>
               </div>
             </div>
             {/* Confluencias & Validez */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
-                <SectionHeader title="Por Confluencias"/>
+                <SectionHeader title={T("Por Confluencias")}/>
                 <GroupBars data={confAnalysis} barColor={G.yellow}/>
               </div>
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
-                <SectionHeader title="Por Validez"/>
-                <GroupBars data={validAnalysis.map(d=>({...d,label:`Validez ${d.n}`}))} barColor={G.blue}/>
+                <SectionHeader title={T("Por Validez")}/>
+                <GroupBars data={validAnalysis.map(d=>({...d,label:`${T("Validez")} ${d.n}`}))} barColor={G.blue}/>
               </div>
             </div>
             {/* Calendar */}
             {/* Mental State Analysis */}
             <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12 }}>
-              <SectionHeader title="Mental State vs Performance"/>
-              {!mentalStateAnalysis.length&&<div style={{color:G.textMuted,fontSize:11,textAlign:"center",padding:"18px 0"}}>Sin datos de estado mental en este período</div>}
+              <SectionHeader title={T("Mental State vs Performance")}/>
+              {!mentalStateAnalysis.length&&<div style={{color:G.textMuted,fontSize:11,textAlign:"center",padding:"18px 0"}}>{T("Sin datos de estado mental en este período")}</div>}
               <div style={{ overflowX:"auto" }}>
                 <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
-                  <thead><tr style={{ borderBottom:`1px solid ${G.border}` }}>{["Estado Mental","Total","Exec","Exec Rate","Win Rate","Net PnL","Missed Profit","Avoided Loss"].map(h=><th key={h} style={{padding:"7px 12px",textAlign:"left",color:G.textSec,fontWeight:400,fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+                  <thead><tr style={{ borderBottom:`1px solid ${G.border}` }}>{[T("Estado Mental"),"Total","Exec","Exec Rate","Win Rate","Net PnL","Missed Profit","Avoided Loss"].map(h=><th key={h} style={{padding:"7px 12px",textAlign:"left",color:G.textSec,fontWeight:400,fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
                   <tbody>
                     {mentalStateAnalysis.map(r=>{
                       const avoidedLoss=r.avoidedLoss||0;
@@ -1580,19 +1951,19 @@ export default function App() {
             </div>
             {/* Best/Worst */}
             <div style={{ marginBottom:4 }}>
-              <div style={{ fontSize:9, color:G.textSec, marginBottom:8, fontFamily:G.fontDisplay }}>MEJOR / PEOR — basado en win rate histórico (todos los datos)</div>
+              <div style={{ fontSize:9, color:G.textSec, marginBottom:8, fontFamily:G.fontDisplay }}>{T("MEJOR / PEOR — basado en win rate histórico (todos los datos)")}</div>
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:12 }}>
-              <BWCard label="Mejor Semana" arr={weekStats}  best={true}/>
-              <BWCard label="Mejor Día"    arr={dayStats}   best={true}/>
-              <BWCard label="Mejor Mes"    arr={monthStats} best={true}/>
-              <BWCard label="Peor Semana"  arr={weekStats}  best={false}/>
-              <BWCard label="Peor Día"     arr={dayStats}   best={false}/>
-              <BWCard label="Peor Mes"     arr={monthStats} best={false}/>
+              <BWCard label={T("Mejor Semana")} arr={weekStats}  best={true}/>
+              <BWCard label={T("Mejor Día")}    arr={dayStats}   best={true}/>
+              <BWCard label={T("Mejor Mes")}    arr={monthStats} best={true}/>
+              <BWCard label={T("Peor Semana")}  arr={weekStats}  best={false}/>
+              <BWCard label={T("Peor Día")}     arr={dayStats}   best={false}/>
+              <BWCard label={T("Peor Mes")}     arr={monthStats} best={false}/>
             </div>
             {/* Monthly Sequences */}
             <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12 }}>
-              <SectionHeader title="Secuencia de Ejecución — Todos los Meses"/>
+              <SectionHeader title={T("Secuencia de Ejecución — Todos los Meses")}/>
               {!monthlySeqs.length&&<div style={{color:G.textMuted,fontSize:11}}>Sin datos</div>}
               <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
                 {monthlySeqs.map(({label,trades:mt})=>{
@@ -1629,5 +2000,6 @@ export default function App() {
 
       </main>
     </div>
+    </SettingsCtx.Provider>
   );
 }
