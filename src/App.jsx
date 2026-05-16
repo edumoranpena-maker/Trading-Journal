@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback, createContext, useContext } from "react";
 
 // ─── Settings persistence ──────────────────────────────────────────────────────
-const SETTINGS_KEY = "tradepulse_settings";
+const SETTINGS_KEY = "pulsecore_settings";
 function loadSettings() {
   try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; }
 }
@@ -774,7 +774,7 @@ function TradeTable({ trades, onDelete, onEdit, showDelete=true }) {
         <tbody>
           {trades.map(t=>(
             <tr key={t.id} className="rh" style={{ borderBottom:`1px solid ${G.border}`, transition:"background 0.1s" }}>
-              <td style={{padding:"8px 10px",color:G.textSec,whiteSpace:"nowrap"}}>{(d=>{const[y,m,d2]=d.split("-");return`${d2}/${m}/${y}`;})(t.date)}</td>
+              <td style={{padding:"8px 10px",color:G.textSec,whiteSpace:"nowrap"}}>{(d=>{const[y,m,d2]=d.split("-");const mn=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];return`${parseInt(d2)} ${mn[parseInt(m)-1]} ${y}`;})(t.date)}</td>
               <td style={{padding:"8px 10px",color:G.textSec,fontSize:10}}>{t.hora||"—"}</td>
               <td style={{padding:"8px 10px",fontWeight:500,whiteSpace:"nowrap"}}>{t.pair}</td>
               <td style={{padding:"8px 10px",color:G.textSec,fontSize:10,whiteSpace:"nowrap"}}>{t.sesion}</td>
@@ -921,6 +921,72 @@ function EconomicCalendar() {
     });
   }, [allItems, targetDate]);
 
+  // ── Bank Holidays (US + UK + EU principales) ────────────────────────────
+  const BANK_HOLIDAYS = useMemo(() => {
+    const y = targetDate.y;
+    // Helper: nth weekday of month (1-based). e.g. nthDay(y,1,1,3) = 3rd Monday Jan
+    const nthDay = (yr, mo, dow, n) => {
+      const d = new Date(yr, mo - 1, 1);
+      let cnt = 0;
+      while (d.getMonth() === mo - 1) {
+        if (d.getDay() === dow) { cnt++; if (cnt === n) return d.getDate(); }
+        d.setDate(d.getDate() + 1);
+      }
+      return null;
+    };
+    // Last weekday of month
+    const lastDay = (yr, mo, dow) => {
+      const d = new Date(yr, mo, 0); // last day of month
+      while (d.getDay() !== dow) d.setDate(d.getDate() - 1);
+      return d.getDate();
+    };
+    // Easter (Computus)
+    const easter = (yr) => {
+      const a=yr%19,b=Math.floor(yr/100),c=yr%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),dy=(h+l-7*m+114)%31+1;
+      return { m: mo, d: dy };
+    };
+    const e = easter(y);
+    const addDays = (m, d, n) => { const dt = new Date(y, m-1, d); dt.setDate(dt.getDate()+n); return { m: dt.getMonth()+1, d: dt.getDate() }; };
+    const gf = addDays(e.m, e.d, -2); // Good Friday
+    const em = addDays(e.m, e.d,  1); // Easter Monday
+
+    const holidays = [
+      // US Holidays
+      { m:1,  d:1,                       label:"New Year's Day",           countries:"🇺🇸🇬🇧🇪🇺" },
+      { m:1,  d:nthDay(y,1,1,3),         label:"MLK Day",                  countries:"🇺🇸" },
+      { m:2,  d:nthDay(y,2,1,3),         label:"Presidents' Day",          countries:"🇺🇸" },
+      { m:gf.m, d:gf.d,                  label:"Good Friday",              countries:"🇺🇸🇬🇧🇪🇺" },
+      { m:e.m,  d:e.d,                   label:"Easter Sunday",            countries:"🇬🇧🇪🇺" },
+      { m:em.m, d:em.d,                  label:"Easter Monday",            countries:"🇬🇧🇪🇺" },
+      { m:5,  d:nthDay(y,5,1,lastDay(y,5,1)===nthDay(y,5,1,4)?4:4)||nthDay(y,5,1,4), label:"Memorial Day (US)", countries:"🇺🇸" },
+      { m:5,  d:1,                       label:"Labour Day / May Day",     countries:"🇬🇧🇪🇺" },
+      { m:7,  d:4,                       label:"Independence Day",         countries:"🇺🇸" },
+      { m:9,  d:nthDay(y,9,1,1),         label:"Labor Day (US)",           countries:"🇺🇸" },
+      { m:11, d:nthDay(y,11,4,4),        label:"Thanksgiving (US)",        countries:"🇺🇸" },
+      { m:12, d:25,                      label:"Christmas Day",            countries:"🇺🇸🇬🇧🇪🇺" },
+      { m:12, d:26,                      label:"Boxing Day",               countries:"🇬🇧🇪🇺" },
+      // UK May bank holiday (first Monday of May)
+      { m:5,  d:nthDay(y,5,1,1),         label:"UK Early May Bank Holiday",countries:"🇬🇧" },
+      // UK Spring bank holiday (last Monday of May)
+      { m:5,  d:lastDay(y,5,1),          label:"UK Spring Bank Holiday",   countries:"🇬🇧" },
+      // UK Summer bank holiday (last Monday of August)
+      { m:8,  d:lastDay(y,8,1),          label:"UK Summer Bank Holiday",   countries:"🇬🇧" },
+    ].filter(h => h.d !== null);
+
+    // Deduplicate by m+d
+    const seen = new Set();
+    return holidays.filter(h => {
+      const k = `${h.m}-${h.d}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }, [targetDate.y]);
+
+  const todayHolidays = useMemo(() => {
+    return BANK_HOLIDAYS.filter(h => h.m === targetDate.m + 1 && h.d === targetDate.d);
+  }, [BANK_HOLIDAYS, targetDate]);
+
   const isToday   = dayOffset === 0;
   const dateLabel = `${DIAS_EN[targetDate.dow]}, ${MESES_EN[targetDate.m]} ${targetDate.d}, ${targetDate.y}`;
   const impactDot = <span style={{ display:"inline-block", width:7, height:7, borderRadius:"50%", background:"#e03030", boxShadow:"0 0 5px #e0303099", flexShrink:0 }}/>;
@@ -957,6 +1023,22 @@ function EconomicCalendar() {
         {navBtn(() => setDayOffset(o => o + 1), "›")}
       </div>
 
+      {/* Bank Holidays */}
+      {todayHolidays.length > 0 && (
+        <div style={{ marginBottom:10, display:"flex", flexDirection:"column", gap:5 }}>
+          {todayHolidays.map((h, i) => (
+            <div key={i} style={{ display:"flex", alignItems:"center", gap:8, background:"rgba(79,142,245,0.08)", border:"1px solid rgba(79,142,245,0.25)", borderRadius:7, padding:"7px 12px" }}>
+              <span style={{ fontSize:12 }}>🏦</span>
+              <div style={{ flex:1 }}>
+                <span style={{ fontSize:11, fontWeight:600, color:G.blue }}>{h.label}</span>
+                <span style={{ fontSize:10, color:G.textSec, marginLeft:8 }}>{h.countries}</span>
+              </div>
+              <span style={{ fontSize:9, background:"rgba(79,142,245,0.15)", color:G.blue, border:"1px solid rgba(79,142,245,0.3)", borderRadius:4, padding:"1px 6px", fontFamily:G.fontMono }}>BANK HOL.</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* States */}
       {loading && (
         <div style={{ display:"flex", alignItems:"center", gap:8, color:G.textSec, fontSize:11, padding:"12px 0" }}>
@@ -971,7 +1053,7 @@ function EconomicCalendar() {
         </div>
       )}
       {!loading && !error && events.length === 0 && (
-        <div style={{ color:G.textMuted, fontSize:11, textAlign:"center", padding:"18px 0" }}>Sin noticias de alto impacto este día ✓</div>
+        <div style={{ color:G.textMuted, fontSize:11, textAlign:"center", padding: todayHolidays.length > 0 ? "8px 0" : "18px 0" }}>Sin noticias de alto impacto este día ✓</div>
       )}
 
       {/* Events table */}
@@ -1004,7 +1086,7 @@ function EconomicCalendar() {
       )}
 
       <div style={{ marginTop:10, paddingTop:8, borderTop:`1px solid ${G.border}`, fontSize:9, color:G.textMuted, display:"flex", justifyContent:"space-between" }}>
-        <span>Fuente: ForexFactory · solo impacto alto</span>
+        <span>Fuente: ForexFactory · solo impacto alto · feriados US/UK/EU</span>
         <span>Auto-refresh cada 5 min</span>
       </div>
     </div>
@@ -1265,10 +1347,9 @@ async function generatePDF(reportContent, reportType, periodLabel) {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(18);
   doc.setTextColor(0, 200, 150);
-  doc.text('TRADEPULSE', margin, 16);
+  doc.text('PULSECORE', margin, 16);
   doc.setFontSize(8);
   doc.setTextColor(94, 104, 128);
-  doc.text('JOURNAL PRO', margin, 22);
   doc.setFontSize(13);
   doc.setTextColor(212, 217, 232);
   doc.text(typeInfo.label.toUpperCase(), margin, 33);
@@ -1285,7 +1366,7 @@ async function generatePDF(reportContent, reportType, periodLabel) {
     doc.rect(0, 12, pageW, 0.5, 'F');
     doc.setFontSize(7);
     doc.setTextColor(94, 104, 128);
-    doc.text('TRADEPULSE JOURNAL PRO', margin, 8);
+    doc.text('PULSECORE JOURNAL', margin, 8);
     doc.text(`${periodLabel} · ${typeInfo.label}`, pageW - margin, 8, { align:'right' });
     y = 20;
   };
@@ -1327,11 +1408,11 @@ async function generatePDF(reportContent, reportType, periodLabel) {
     doc.setPage(p);
     doc.setFillColor(7, 8, 12); doc.rect(0, pageH - 10, pageW, 10, 'F');
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(40, 47, 66);
-    doc.text(`TradePulse Journal Pro · ${typeInfo.label} · ${periodLabel}`, margin, pageH - 4);
+    doc.text(`PulseCore · ${typeInfo.label} · ${periodLabel}`, margin, pageH - 4);
     doc.text(`Página ${p} de ${totalPages}`, pageW - margin, pageH - 4, { align:'right' });
   }
 
-  const fileName = `tradepulse_${reportType}_${periodLabel.replace(/\s+/g,'_').toLowerCase()}_${new Date().toISOString().slice(0,10)}.pdf`;
+  const fileName = `pulsecore_${reportType}_${periodLabel.replace(/\s+/g,'_').toLowerCase()}_${new Date().toISOString().slice(0,10)}.pdf`;
   doc.save(fileName);
 }
 
@@ -1634,7 +1715,7 @@ export default function App() {
     return (
       <div style={{ minHeight:"100vh", background:G.bg, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:16 }}>
         <style>{STYLE}</style>
-        <div style={{ fontFamily:G.fontDisplay, fontWeight:800, fontSize:18, letterSpacing:"-0.03em" }}>TRADE<span style={{ color:G.accent }}>PULSE</span></div>
+        <div style={{ fontFamily:G.fontDisplay, fontWeight:800, fontSize:18, letterSpacing:"-0.03em" }}>PULSE<span style={{ color:G.accent }}>CORE</span></div>
         <div style={{ display:"flex", alignItems:"center", gap:10, color:G.textSec, fontSize:12, fontFamily:G.fontMono }}>
           <div style={{ width:16, height:16, borderRadius:"50%", border:`2px solid ${G.border}`, borderTopColor:G.accent, animation:"spin 0.8s linear infinite" }}/>
           {USE_SUPABASE ? "Conectando a Supabase..." : "Cargando datos..."}
@@ -1648,7 +1729,7 @@ export default function App() {
       <div style={{ minHeight:"100vh", background:G.bg, display:"flex", alignItems:"center", justifyContent:"center", padding:32 }}>
         <style>{STYLE}</style>
         <div style={{ maxWidth:460, textAlign:"center" }}>
-          <div style={{ fontFamily:G.fontDisplay, fontWeight:800, fontSize:18, marginBottom:24 }}>TRADE<span style={{ color:G.accent }}>PULSE</span></div>
+          <div style={{ fontFamily:G.fontDisplay, fontWeight:800, fontSize:18, marginBottom:24 }}>PULSE<span style={{ color:G.accent }}>CORE</span></div>
           <div style={{ background:"rgba(240,64,96,0.10)", border:"1px solid rgba(240,64,96,0.3)", borderRadius:10, padding:24 }}>
             <div style={{ fontSize:14, fontWeight:600, color:G.red, marginBottom:8 }}>Error de conexión a Supabase</div>
             <div style={{ fontSize:11, color:G.textSec, fontFamily:G.fontMono, marginBottom:16 }}>{error}</div>
@@ -1672,9 +1753,7 @@ export default function App() {
         {/* Logo left */}
         <div style={{ display:"flex", alignItems:"center", gap:12, flex:"0 0 auto" }}>
           <div className="blink" style={{ width:6, height:6, borderRadius:"50%", background:USE_SUPABASE ? G.accent : G.yellow }}/>
-          <span style={{ fontFamily:G.fontDisplay, fontWeight:800, fontSize:14, letterSpacing:"-0.03em", color:G.textPrimary }}>TRADE<span style={{ color:G.accent }}>PULSE</span></span>
-          <span style={{ color:G.border }}>|</span>
-          <span style={{ fontSize:9, color:G.textSec, letterSpacing:"0.14em" }}>JOURNAL PRO</span>
+          <span style={{ fontFamily:G.fontDisplay, fontWeight:800, fontSize:14, letterSpacing:"-0.03em", color:G.textPrimary }}>PULSE<span style={{ color:G.accent }}>CORE</span></span>
           {syncing && <span style={{ fontSize:8, color:G.textSec, fontFamily:G.fontMono }}>{T("↻ guardando…")}</span>}
         </div>
 
