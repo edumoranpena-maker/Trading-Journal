@@ -832,8 +832,6 @@ function TradeForm({ initial, onSave, onCancel }) {
 }
 
 function EconomicCalendar() {
-  // Usamos allorigins.win como proxy CORS para fetchear el JSON de ForexFactory.
-  // ForexFactory tiene CORS bloqueado en directo, pero allorigins.win lo permite.
   const PROXY = "https://api.allorigins.win/get?url=";
   const FF_URL = (week) =>
     `${PROXY}${encodeURIComponent(`https://nfs.faireconomy.media/ff_calendar_${week}.xml`)}`;
@@ -841,17 +839,71 @@ function EconomicCalendar() {
   const DIAS_EN  = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
   const MESES_EN = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
-  const todayNY = useMemo(() => {
-    const d = new Date(new Date().toLocaleString("en-US", { timeZone:"America/New_York" }));
+  // ── Detect user's local timezone offset vs Eastern Time ─────────────────
+  // FF times are in Eastern Time. We convert them to the user's local time.
+  const localTZOffset = useMemo(() => {
+    // Returns difference in minutes: local - ET
+    // We compare what "now" is in ET vs local
+    const now = new Date();
+    const etStr  = now.toLocaleString("en-US", { timeZone:"America/New_York", hour:"numeric", minute:"numeric", hour12:false });
+    const locStr = now.toLocaleString("en-US", { hour:"numeric", minute:"numeric", hour12:false });
+    const toMin = s => { const [h,m] = s.split(":").map(Number); return h*60+(m||0); };
+    let diff = toMin(locStr) - toMin(etStr);
+    // Handle midnight crossover
+    if (diff > 720)  diff -= 1440;
+    if (diff < -720) diff += 1440;
+    return diff; // minutes local is ahead of ET (negative if behind)
+  }, []);
+
+  // Convert "8:30am" / "8:30pm" (ET, 12h) → "HH:MM" local 24h
+  const convertTime = useCallback((timeStr) => {
+    if (!timeStr || timeStr === "All Day" || timeStr === "") return timeStr;
+    try {
+      const m = timeStr.match(/^(\d{1,2}):(\d{2})(am|pm)$/i);
+      if (!m) return timeStr;
+      let h = parseInt(m[1]);
+      const min = parseInt(m[2]);
+      const ampm = m[3].toLowerCase();
+      if (ampm === "pm" && h !== 12) h += 12;
+      if (ampm === "am" && h === 12) h = 0;
+      let totalMin = h * 60 + min + localTZOffset;
+      // normalize
+      totalMin = ((totalMin % 1440) + 1440) % 1440;
+      const lh = Math.floor(totalMin / 60);
+      const lm = totalMin % 60;
+      return `${String(lh).padStart(2,"0")}:${String(lm).padStart(2,"0")}`;
+    } catch { return timeStr; }
+  }, [localTZOffset]);
+
+  // Also adjust date if time crosses midnight
+  const dateShiftDays = useCallback((timeStr) => {
+    if (!timeStr || timeStr === "All Day") return 0;
+    try {
+      const m = timeStr.match(/^(\d{1,2}):(\d{2})(am|pm)$/i);
+      if (!m) return 0;
+      let h = parseInt(m[1]);
+      const min = parseInt(m[2]);
+      const ampm = m[3].toLowerCase();
+      if (ampm === "pm" && h !== 12) h += 12;
+      if (ampm === "am" && h === 12) h = 0;
+      let totalMin = h * 60 + min + localTZOffset;
+      if (totalMin < 0) return -1;
+      if (totalMin >= 1440) return 1;
+      return 0;
+    } catch { return 0; }
+  }, [localTZOffset]);
+
+  const todayLocal = useMemo(() => {
+    const d = new Date();
     return { y:d.getFullYear(), m:d.getMonth(), d:d.getDate() };
   }, []);
 
   const [dayOffset, setDayOffset] = useState(0);
   const targetDate = useMemo(() => {
-    const base = new Date(todayNY.y, todayNY.m, todayNY.d);
+    const base = new Date(todayLocal.y, todayLocal.m, todayLocal.d);
     base.setDate(base.getDate() + dayOffset);
     return { y:base.getFullYear(), m:base.getMonth(), d:base.getDate(), dow:base.getDay() };
-  }, [todayNY, dayOffset]);
+  }, [todayLocal, dayOffset]);
 
   const [allItems, setAllItems] = useState(null);
   const [loading,  setLoading]  = useState(true);
@@ -908,88 +960,167 @@ function EconomicCalendar() {
     return () => clearInterval(id);
   }, [fetchAll]);
 
+  // Filter events for targetDate, accounting for timezone day shifts
   const events = useMemo(() => {
     if (!allItems) return [];
     return allItems.filter(ev => {
       const parts = ev.dateStr.split("-");
       if (parts.length < 3) return false;
       const [mo, dy, yr] = parts.map(Number);
-      return yr === targetDate.y
-          && (mo - 1) === targetDate.m
-          && dy === targetDate.d
-          && ev.impact === "High";
-    });
-  }, [allItems, targetDate]);
+      if (ev.impact !== "High") return false;
+      // Date in ET as stored in XML
+      const evDate = new Date(yr, mo - 1, dy);
+      // Shift by day crossing due to timezone conversion
+      const shift = dateShiftDays(ev.time);
+      evDate.setDate(evDate.getDate() + shift);
+      return evDate.getFullYear() === targetDate.y
+          && evDate.getMonth()    === targetDate.m
+          && evDate.getDate()     === targetDate.d;
+    }).map(ev => ({ ...ev, localTime: convertTime(ev.time) }))
+      .sort((a, b) => {
+        if (a.localTime === "All Day") return -1;
+        if (b.localTime === "All Day") return 1;
+        return a.localTime.localeCompare(b.localTime);
+      });
+  }, [allItems, targetDate, convertTime, dateShiftDays]);
 
-  // ── Bank Holidays (US + UK + EU principales) ────────────────────────────
+  // ── Bank Holidays — All Forex currencies ────────────────────────────────
+  // USD 🇺🇸 · EUR 🇪🇺 · GBP 🇬🇧 · JPY 🇯🇵 · CHF 🇨🇭 · CAD 🇨🇦 · AUD 🇦🇺 · NZD 🇳🇿
   const BANK_HOLIDAYS = useMemo(() => {
     const y = targetDate.y;
-    // Helper: nth weekday of month (1-based). e.g. nthDay(y,1,1,3) = 3rd Monday Jan
+
     const nthDay = (yr, mo, dow, n) => {
-      const d = new Date(yr, mo - 1, 1);
-      let cnt = 0;
+      const d = new Date(yr, mo - 1, 1); let cnt = 0;
       while (d.getMonth() === mo - 1) {
         if (d.getDay() === dow) { cnt++; if (cnt === n) return d.getDate(); }
         d.setDate(d.getDate() + 1);
       }
       return null;
     };
-    // Last weekday of month
     const lastDay = (yr, mo, dow) => {
-      const d = new Date(yr, mo, 0); // last day of month
+      const d = new Date(yr, mo, 0);
       while (d.getDay() !== dow) d.setDate(d.getDate() - 1);
       return d.getDate();
     };
-    // Easter (Computus)
     const easter = (yr) => {
       const a=yr%19,b=Math.floor(yr/100),c=yr%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),dy=(h+l-7*m+114)%31+1;
       return { m: mo, d: dy };
     };
-    const e = easter(y);
     const addDays = (m, d, n) => { const dt = new Date(y, m-1, d); dt.setDate(dt.getDate()+n); return { m: dt.getMonth()+1, d: dt.getDate() }; };
+    const e  = easter(y);
     const gf = addDays(e.m, e.d, -2); // Good Friday
     const em = addDays(e.m, e.d,  1); // Easter Monday
+    const hf = addDays(e.m, e.d, 39); // Ascension Day (EUR/CHF)
+    const wm = addDays(e.m, e.d, 49); // Whit Monday (EUR/CHF)
+
+    // NZD: Waitangi (Feb 6), ANZAC (Apr 25), Queen's Birthday (1st Mon Jun), Labour (4th Mon Oct)
+    // AUD: Australia Day (Jan 26), ANZAC (Apr 25), Queen's Birthday (2nd Mon Jun)
+    // CAD: Victoria Day (Mon before May 25), Canada Day (Jul 1), Civic (1st Mon Aug), Labour (1st Mon Sep), Thanksgiving (2nd Mon Oct), Remembrance (Nov 11)
+    // JPY: Coming-of-Age (2nd Mon Jan), National Foundation (Feb 11), Vernal Equinox (~Mar 20), Showa Day (Apr 29), Constitution (May 3), Greenery (May 4), Children's (May 5), Marine Day (3rd Mon Jul), Mountain Day (Aug 11), Respect for Aged (3rd Mon Sep), Sports Day (2nd Mon Oct), Culture Day (Nov 3), Labour Thanksgiving (Nov 23), Emperor's Birthday (Feb 23)
+    // CHF: Berchtold (Jan 2), National Day (Aug 1)
+
+    // Victoria Day: Monday on or before May 25
+    const victoriaDay = (() => {
+      for (let d = 25; d >= 19; d--) { if (new Date(y, 4, d).getDay() === 1) return d; } return null;
+    })();
 
     const holidays = [
-      // US Holidays
-      { m:1,  d:1,                       label:"New Year's Day",           countries:"🇺🇸🇬🇧🇪🇺" },
-      { m:1,  d:nthDay(y,1,1,3),         label:"MLK Day",                  countries:"🇺🇸" },
-      { m:2,  d:nthDay(y,2,1,3),         label:"Presidents' Day",          countries:"🇺🇸" },
-      { m:gf.m, d:gf.d,                  label:"Good Friday",              countries:"🇺🇸🇬🇧🇪🇺" },
-      { m:e.m,  d:e.d,                   label:"Easter Sunday",            countries:"🇬🇧🇪🇺" },
-      { m:em.m, d:em.d,                  label:"Easter Monday",            countries:"🇬🇧🇪🇺" },
-      { m:5,  d:nthDay(y,5,1,lastDay(y,5,1)===nthDay(y,5,1,4)?4:4)||nthDay(y,5,1,4), label:"Memorial Day (US)", countries:"🇺🇸" },
-      { m:5,  d:1,                       label:"Labour Day / May Day",     countries:"🇬🇧🇪🇺" },
-      { m:7,  d:4,                       label:"Independence Day",         countries:"🇺🇸" },
-      { m:9,  d:nthDay(y,9,1,1),         label:"Labor Day (US)",           countries:"🇺🇸" },
-      { m:11, d:nthDay(y,11,4,4),        label:"Thanksgiving (US)",        countries:"🇺🇸" },
-      { m:12, d:25,                      label:"Christmas Day",            countries:"🇺🇸🇬🇧🇪🇺" },
-      { m:12, d:26,                      label:"Boxing Day",               countries:"🇬🇧🇪🇺" },
-      // UK May bank holiday (first Monday of May)
-      { m:5,  d:nthDay(y,5,1,1),         label:"UK Early May Bank Holiday",countries:"🇬🇧" },
-      // UK Spring bank holiday (last Monday of May)
-      { m:5,  d:lastDay(y,5,1),          label:"UK Spring Bank Holiday",   countries:"🇬🇧" },
-      // UK Summer bank holiday (last Monday of August)
-      { m:8,  d:lastDay(y,8,1),          label:"UK Summer Bank Holiday",   countries:"🇬🇧" },
-    ].filter(h => h.d !== null);
+      // ── USD (US) ──────────────────────────────────────────────────────────
+      { m:1,  d:1,                    label:"New Year's Day",             currencies:["USD","EUR","GBP","JPY","CHF","CAD","AUD","NZD"] },
+      { m:1,  d:nthDay(y,1,1,3),     label:"MLK Day",                    currencies:["USD"] },
+      { m:2,  d:nthDay(y,2,1,3),     label:"Presidents' Day",            currencies:["USD"] },
+      { m:gf.m,d:gf.d,               label:"Good Friday",                currencies:["USD","EUR","GBP","CHF","AUD","NZD"] },
+      { m:em.m,d:em.d,               label:"Easter Monday",              currencies:["EUR","GBP","CHF","AUD","NZD"] },
+      { m:5,  d:nthDay(y,5,1,4)??lastDay(y,5,1), label:"Memorial Day",   currencies:["USD"] },
+      { m:7,  d:4,                    label:"Independence Day",           currencies:["USD"] },
+      { m:9,  d:nthDay(y,9,1,1),     label:"Labor Day (US)",             currencies:["USD"] },
+      { m:11, d:nthDay(y,11,4,4),    label:"Thanksgiving (US)",          currencies:["USD"] },
+      { m:11, d:nthDay(y,11,4,4)+1,  label:"Black Friday (US half-day)", currencies:["USD"] },
+      { m:12, d:25,                   label:"Christmas Day",              currencies:["USD","EUR","GBP","JPY","CHF","CAD","AUD","NZD"] },
+      { m:12, d:26,                   label:"Boxing Day",                 currencies:["GBP","CAD","AUD","NZD"] },
 
-    // Deduplicate by m+d
-    const seen = new Set();
-    return holidays.filter(h => {
-      const k = `${h.m}-${h.d}`;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
+      // ── EUR (Eurozone) ────────────────────────────────────────────────────
+      { m:5,  d:1,                    label:"Labour Day / May Day",       currencies:["EUR","CHF"] },
+      { m:hf.m,d:hf.d,               label:"Ascension Day",              currencies:["EUR","CHF"] },
+      { m:wm.m,d:wm.d,               label:"Whit Monday",                currencies:["EUR","CHF"] },
+      { m:8,  d:15,                   label:"Assumption of Mary",         currencies:["EUR"] },
+      { m:11, d:1,                    label:"All Saints' Day",            currencies:["EUR"] },
+      { m:12, d:8,                    label:"Immaculate Conception",      currencies:["EUR"] },
+
+      // ── GBP (UK) ──────────────────────────────────────────────────────────
+      { m:5,  d:nthDay(y,5,1,1),     label:"UK Early May Bank Holiday",  currencies:["GBP"] },
+      { m:5,  d:lastDay(y,5,1),      label:"UK Spring Bank Holiday",     currencies:["GBP"] },
+      { m:8,  d:lastDay(y,8,1),      label:"UK Summer Bank Holiday",     currencies:["GBP"] },
+
+      // ── JPY (Japan) ───────────────────────────────────────────────────────
+      { m:1,  d:nthDay(y,1,1,2),     label:"Coming-of-Age Day",          currencies:["JPY"] },
+      { m:2,  d:11,                   label:"National Foundation Day",    currencies:["JPY"] },
+      { m:2,  d:23,                   label:"Emperor's Birthday",         currencies:["JPY"] },
+      { m:3,  d:20,                   label:"Vernal Equinox Day",         currencies:["JPY"] },
+      { m:4,  d:29,                   label:"Showa Day",                  currencies:["JPY"] },
+      { m:5,  d:3,                    label:"Constitution Memorial Day",  currencies:["JPY"] },
+      { m:5,  d:4,                    label:"Greenery Day",               currencies:["JPY"] },
+      { m:5,  d:5,                    label:"Children's Day",             currencies:["JPY"] },
+      { m:7,  d:nthDay(y,7,1,3),     label:"Marine Day",                 currencies:["JPY"] },
+      { m:8,  d:11,                   label:"Mountain Day",               currencies:["JPY"] },
+      { m:9,  d:nthDay(y,9,1,3),     label:"Respect for Aged Day",       currencies:["JPY"] },
+      { m:10, d:nthDay(y,10,1,2),    label:"Sports Day",                 currencies:["JPY"] },
+      { m:11, d:3,                    label:"Culture Day",                currencies:["JPY"] },
+      { m:11, d:23,                   label:"Labour Thanksgiving Day",    currencies:["JPY"] },
+
+      // ── CHF (Switzerland) ─────────────────────────────────────────────────
+      { m:1,  d:2,                    label:"Berchtoldstag",              currencies:["CHF"] },
+      { m:8,  d:1,                    label:"Swiss National Day",         currencies:["CHF"] },
+      { m:12, d:26,                   label:"St. Stephen's Day",          currencies:["CHF"] },
+
+      // ── CAD (Canada) ──────────────────────────────────────────────────────
+      { m:1,  d:2,                    label:"New Year's (observed)",      currencies:["CAD"] },
+      { m:gf.m,d:gf.d,               label:"Good Friday",                currencies:["CAD"] },
+      { m:5,  d:victoriaDay,          label:"Victoria Day",               currencies:["CAD"] },
+      { m:7,  d:1,                    label:"Canada Day",                 currencies:["CAD"] },
+      { m:8,  d:nthDay(y,8,1,1),     label:"Civic Holiday",              currencies:["CAD"] },
+      { m:9,  d:nthDay(y,9,1,1),     label:"Labour Day (CA)",            currencies:["CAD"] },
+      { m:10, d:nthDay(y,10,1,2),    label:"Thanksgiving (CA)",          currencies:["CAD"] },
+      { m:11, d:11,                   label:"Remembrance Day",            currencies:["CAD"] },
+
+      // ── AUD (Australia) ───────────────────────────────────────────────────
+      { m:1,  d:26,                   label:"Australia Day",              currencies:["AUD"] },
+      { m:4,  d:25,                   label:"ANZAC Day",                  currencies:["AUD","NZD"] },
+      { m:6,  d:nthDay(y,6,1,2),     label:"King's Birthday (AU)",       currencies:["AUD"] },
+      { m:8,  d:nthDay(y,8,1,1),     label:"Bank Holiday (NSW)",         currencies:["AUD"] },
+
+      // ── NZD (New Zealand) ─────────────────────────────────────────────────
+      { m:2,  d:6,                    label:"Waitangi Day",               currencies:["NZD"] },
+      { m:6,  d:nthDay(y,6,1,1),     label:"King's Birthday (NZ)",       currencies:["NZD"] },
+      { m:10, d:lastDay(y,10,1),     label:"Labour Day (NZ)",            currencies:["NZD"] },
+    ].filter(h => h.d !== null && h.d !== undefined);
+
+    // Merge same day entries and combine currencies
+    const byKey = {};
+    holidays.forEach(h => {
+      const k = `${h.m}-${h.d}-${h.label}`;
+      if (!byKey[k]) byKey[k] = { ...h, currencies: [...h.currencies] };
+      else h.currencies.forEach(c => { if (!byKey[k].currencies.includes(c)) byKey[k].currencies.push(c); });
     });
+    return Object.values(byKey);
   }, [targetDate.y]);
 
   const todayHolidays = useMemo(() => {
     return BANK_HOLIDAYS.filter(h => h.m === targetDate.m + 1 && h.d === targetDate.d);
   }, [BANK_HOLIDAYS, targetDate]);
 
+  // Currency flag map
+  const CURR_FLAG = { USD:"🇺🇸", EUR:"🇪🇺", GBP:"🇬🇧", JPY:"🇯🇵", CHF:"🇨🇭", CAD:"🇨🇦", AUD:"🇦🇺", NZD:"🇳🇿" };
+
   const isToday   = dayOffset === 0;
   const dateLabel = `${DIAS_EN[targetDate.dow]}, ${MESES_EN[targetDate.m]} ${targetDate.d}, ${targetDate.y}`;
   const impactDot = <span style={{ display:"inline-block", width:7, height:7, borderRadius:"50%", background:"#e03030", boxShadow:"0 0 5px #e0303099", flexShrink:0 }}/>;
+
+  // TZ label for display
+  const tzLabel = useMemo(() => {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone.split("/").pop().replace("_"," "); }
+    catch { return "Local"; }
+  }, []);
 
   const navBtn = (onClick, label) => (
     <button onClick={onClick} style={{ background:"none", border:`1px solid ${G.border}`, color:G.textSec, borderRadius:6, width:28, height:28, cursor:"pointer", fontSize:14, display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -1003,7 +1134,7 @@ function EconomicCalendar() {
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
         <div style={{ display:"flex", alignItems:"center", gap:8 }}>
           <span style={{ fontSize:9, color:G.textSec, letterSpacing:"0.14em", textTransform:"uppercase", fontFamily:G.fontDisplay }}>Noticias de Alto Impacto</span>
-          <span style={{ fontSize:9, background:"rgba(224,48,48,0.12)", color:"#e05050", border:"1px solid rgba(224,48,48,0.3)", borderRadius:4, padding:"1px 6px" }}>● ROJO</span>
+          <span style={{ fontSize:9, background:`${G.accentDim}`, color:G.accent, border:`1px solid ${G.accent}44`, borderRadius:4, padding:"1px 6px", fontFamily:G.fontMono }}>{tzLabel}</span>
           {!isToday && (
             <button onClick={() => setDayOffset(0)} style={{ fontSize:9, background:"none", border:`1px solid ${G.border}`, color:G.textSec, borderRadius:4, padding:"2px 8px", cursor:"pointer" }}>Hoy</button>
           )}
@@ -1031,9 +1162,14 @@ function EconomicCalendar() {
               <span style={{ fontSize:12 }}>🏦</span>
               <div style={{ flex:1 }}>
                 <span style={{ fontSize:11, fontWeight:600, color:G.blue }}>{h.label}</span>
-                <span style={{ fontSize:10, color:G.textSec, marginLeft:8 }}>{h.countries}</span>
               </div>
-              <span style={{ fontSize:9, background:"rgba(79,142,245,0.15)", color:G.blue, border:"1px solid rgba(79,142,245,0.3)", borderRadius:4, padding:"1px 6px", fontFamily:G.fontMono }}>BANK HOL.</span>
+              <div style={{ display:"flex", gap:3, flexWrap:"wrap", justifyContent:"flex-end" }}>
+                {h.currencies.map(c => (
+                  <span key={c} style={{ fontSize:9, background:"rgba(79,142,245,0.12)", color:G.blue, border:"1px solid rgba(79,142,245,0.28)", borderRadius:4, padding:"1px 5px", fontFamily:G.fontMono, fontWeight:600 }}>
+                    {CURR_FLAG[c]} {c}
+                  </span>
+                ))}
+              </div>
             </div>
           ))}
         </div>
@@ -1059,7 +1195,7 @@ function EconomicCalendar() {
       {/* Events table */}
       {!loading && !error && events.length > 0 && (
         <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
-          <div style={{ display:"grid", gridTemplateColumns:"70px 52px 1fr 72px 72px 64px", paddingBottom:6, marginBottom:2, borderBottom:`1px solid ${G.border}` }}>
+          <div style={{ display:"grid", gridTemplateColumns:"60px 52px 1fr 72px 72px 64px", paddingBottom:6, marginBottom:2, borderBottom:`1px solid ${G.border}` }}>
             {["Hora","Par","Evento","Forecast","Anterior","Actual"].map(h => (
               <div key={h} style={{ fontSize:8, color:G.textMuted, letterSpacing:"0.10em", textTransform:"uppercase", padding:"0 6px" }}>{h}</div>
             ))}
@@ -1067,8 +1203,8 @@ function EconomicCalendar() {
           {events.map((ev, i) => {
             const hasActual = ev.actual && ev.actual !== "" && ev.actual !== "—";
             return (
-              <div key={i} style={{ display:"grid", gridTemplateColumns:"70px 52px 1fr 72px 72px 64px", padding:"9px 0", borderBottom:i < events.length - 1 ? `1px solid ${G.border}` : "none", alignItems:"center" }}>
-                <div style={{ padding:"0 6px", fontSize:10, color:G.textSec }}>{ev.time}</div>
+              <div key={i} style={{ display:"grid", gridTemplateColumns:"60px 52px 1fr 72px 72px 64px", padding:"9px 0", borderBottom:i < events.length - 1 ? `1px solid ${G.border}` : "none", alignItems:"center" }}>
+                <div style={{ padding:"0 6px", fontSize:10, color:G.textSec, fontFamily:G.fontMono }}>{ev.localTime}</div>
                 <div style={{ padding:"0 6px" }}>
                   <span style={{ fontSize:10, fontWeight:700, background:"rgba(224,48,48,0.12)", color:"#e06060", border:"1px solid rgba(224,48,48,0.25)", borderRadius:4, padding:"1px 6px" }}>{ev.currency}</span>
                 </div>
@@ -1086,8 +1222,8 @@ function EconomicCalendar() {
       )}
 
       <div style={{ marginTop:10, paddingTop:8, borderTop:`1px solid ${G.border}`, fontSize:9, color:G.textMuted, display:"flex", justifyContent:"space-between" }}>
-        <span>Fuente: ForexFactory · solo impacto alto · feriados US/UK/EU</span>
-        <span>Auto-refresh cada 5 min</span>
+        <span>ForexFactory · alto impacto · hora local · feriados USD/EUR/GBP/JPY/CHF/CAD/AUD/NZD</span>
+        <span>Auto-refresh 5 min</span>
       </div>
     </div>
   );
@@ -1668,7 +1804,7 @@ export default function App() {
   const now = new Date("2026-05-07");
   const latestDate = useMemo(() => { if(!trades.length)return now; return new Date([...trades].sort((a,b)=>new Date(b.date)-new Date(a.date))[0].date); }, [trades]);
   const curYr=latestDate.getFullYear(), curMon=latestDate.getMonth();
-  const currentMonthTrades = useMemo(() => trades.filter(t=>{const[yr,,mo]=t.date.split("-").map(Number);return yr===curYr&&(mo-1)===curMon;}), [trades,curYr,curMon]);
+  const currentMonthTrades = useMemo(() => trades.filter(t=>{const[yr,mo]=t.date.split("-").map(Number);return yr===curYr&&(mo-1)===curMon;}), [trades,curYr,curMon]);
   const filteredTrades = useMemo(() => filterByPeriod(trades,tf,tfPeriod), [trades,tf,tfPeriod]);
   const stats          = useMemo(() => calcStats(filteredTrades), [filteredTrades]);
   const analTrades     = useMemo(() => filterByPeriod(trades,analTf,analPeriod), [trades,analTf,analPeriod]);
@@ -1680,8 +1816,8 @@ export default function App() {
   const dayStats  =useMemo(()=>statsByDayOfWeek(trades),[trades]);
   const weekStats =useMemo(()=>statsByWeekOfMonth(trades),[trades]);
   const monthStats=useMemo(()=>statsByMonth(trades),[trades]);
-  const monthlySeqs=useMemo(()=>{const m={};analTrades.filter(t=>t.ejecutado).forEach(t=>{const[yr,,mo]=t.date.split("-").map(Number);const mon=mo-1;const k=`${yr}-${String(mon).padStart(2,"0")}`;if(!m[k])m[k]={label:`${MESES_ES[mon]} ${yr}`,trades:[]};m[k].trades.push(t);});return Object.entries(m).sort(([a],[b])=>a>b?1:-1).map(([,v])=>v);},[analTrades]);
-  const tradesByMonth=useMemo(()=>{const m={};analTrades.forEach(t=>{const[yr,,mo]=t.date.split("-").map(Number);const mon=mo-1;const k=`${yr}-${String(mon).padStart(2,"0")}`;const lbl=`${MESES_ES[mon]} ${yr}`;if(!m[k])m[k]={label:lbl,trades:[]};m[k].trades.push(t);});return Object.entries(m).sort(([a],[b])=>a>b?-1:1).map(([,v])=>v);},[analTrades]);
+  const monthlySeqs=useMemo(()=>{const m={};analTrades.filter(t=>t.ejecutado).forEach(t=>{const[yr,mo]=t.date.split("-").map(Number);const mon=mo-1;const k=`${yr}-${String(mon).padStart(2,"0")}`;if(!m[k])m[k]={label:`${MESES_ES[mon]} ${yr}`,trades:[]};m[k].trades.push(t);});return Object.entries(m).sort(([a],[b])=>a>b?1:-1).map(([,v])=>v);},[analTrades]);
+  const tradesByMonth=useMemo(()=>{const m={};analTrades.forEach(t=>{const[yr,mo]=t.date.split("-").map(Number);const mon=mo-1;const k=`${yr}-${String(mon).padStart(2,"0")}`;const lbl=`${MESES_ES[mon]} ${yr}`;if(!m[k])m[k]={label:lbl,trades:[]};m[k].trades.push(t);});return Object.entries(m).sort(([a],[b])=>a>b?-1:1).map(([,v])=>v);},[analTrades]);
   const marketStats=useMemo(()=>MERCADOS.map(m=>{const mt=filteredTrades.filter(t=>t.mercado===m&&t.ejecutado);if(!mt.length)return null;return{m,pnl:mt.reduce((s,t)=>s+t.pnl,0),r:mt.reduce((s,t)=>s+t.rr,0),wr:((mt.filter(t=>getResult(t)==="Win").length/mt.length)*100).toFixed(0),len:mt.length};}).filter(Boolean),[filteredTrades]);
   const sesionStats=useMemo(()=>SESIONES.map(s=>{const st=filteredTrades.filter(t=>t.sesion===s&&t.ejecutado);if(!st.length)return null;return{s,pnl:st.reduce((a,t)=>a+t.pnl,0),r:st.reduce((a,t)=>a+t.rr,0),wr:((st.filter(t=>getResult(t)==="Win").length/st.length)*100).toFixed(0),len:st.length};}).filter(Boolean),[filteredTrades]);
   const dominantEmotion=useMemo(()=>{const counts={};filteredTrades.forEach(t=>{const s=t.estado_mental;if(s)counts[s]=(counts[s]||0)+1;});if(!Object.keys(counts).length)return null;const top=Object.entries(counts).sort(([,a],[,b])=>b-a)[0];return{state:top[0],count:top[1],total:filteredTrades.length,polarity:getMentalPolarity(top[0])};},[filteredTrades]);
