@@ -400,14 +400,16 @@ function calcStats(trades) {
   const totalPnl=exec.reduce((s,t)=>s+t.pnl,0), totalR=exec.reduce((s,t)=>s+t.rr,0);
   const avgWinR=wins.length?wins.reduce((s,t)=>s+t.rr,0)/wins.length:0;
   const avgLossR=losses.length?Math.abs(losses.reduce((s,t)=>s+t.rr,0)/losses.length):1;
-  const wr=wins.length/exec.length, expVal=(wr*avgWinR-(1-wr)*avgLossR).toFixed(2);
+  // WR based only on W and L (BE excluded from denominator)
+  const wlTotal=wins.length+losses.length;
+  const wr=wlTotal>0?wins.length/wlTotal:0;
+  const expVal=(wr*avgWinR-(1-wr)*avgLossR).toFixed(2);
   const gw=wins.reduce((s,t)=>s+t.pnl,0), gl=Math.abs(losses.reduce((s,t)=>s+t.pnl,0)), pf=gl>0?(gw/gl).toFixed(2):"∞";
   const maxDD=(()=>{let pk=0,cum=0,dd=0;exec.forEach(t=>{cum+=t.pnl;if(cum>pk)pk=cum;dd=Math.max(dd,pk-cum);});return dd;})();
   const maxDDR=(()=>{let pk=0,cum=0,dd=0;exec.forEach(t=>{cum+=t.rr;if(cum>pk)pk=cum;dd=Math.max(dd,pk-cum);});return dd;})();
   let best=0,worst=0,cur=0;
   exec.forEach(t=>{const r=getResult(t);if(r==="Win"){cur=cur>=0?cur+1:1;}else if(r==="Loss"){cur=cur<=0?cur-1:-1;}else{cur=0;}best=Math.max(best,cur);worst=Math.min(worst,cur);});
   const execRate=trades.length>0?((exec.length/trades.length)*100).toFixed(1):"0.0";
-  // Potential if all trades executed
   const potentialPnl = trades.reduce((s,t)=>s+t.pnl,0);
   const potentialR   = trades.reduce((s,t)=>s+t.rr,0);
   return {total:exec.length,wins:wins.length,losses:losses.length,bes:bes.length,winRate:(wr*100).toFixed(1),totalPnl,totalR:totalR.toFixed(2),avgRR:avgWinR.toFixed(2),profitFactor:pf,maxDD:maxDD.toFixed(0),maxDDR:maxDDR.toFixed(2),expValue:expVal,execRate,execCount:exec.length,nonExecCount:trades.length-exec.length,bestStreak:best,worstStreak:worst,avgWin:wins.length?wins.reduce((s,t)=>s+t.pnl,0)/wins.length:0,avgLoss:losses.length?losses.reduce((s,t)=>s+t.pnl,0)/losses.length:0,potentialPnl:potentialPnl.toFixed(0),potentialR:potentialR.toFixed(2),validSetups:trades.length};
@@ -435,18 +437,83 @@ function buildPeriodOptions(tf, trades) {
   return [{id:"alltime",label:"All‑Time"}];
 }
 
-function wrScore(wins,total,sumR){if(total===0)return -Infinity;return(wins/total)*100+(sumR/total)*0.1;}
+function wrScore(wins,losses,sumR){const wl=wins+losses;if(wl===0)return -Infinity;return(wins/wl)*100+(sumR/(wl||1))*0.1;}
 function statsByDayOfWeek(trades){
-  const m={};trades.filter(t=>t.ejecutado).forEach(t=>{const dow=new Date(t.date).getDay();if(!m[dow])m[dow]={label:DIAS_ES[dow],wins:0,total:0,sumR:0};if(getResult(t)==="Win")m[dow].wins++;m[dow].total++;m[dow].sumR+=t.rr;});
-  return Object.values(m).map(v=>({label:v.label,count:v.total,wr:v.total?((v.wins/v.total)*100).toFixed(0):0,score:wrScore(v.wins,v.total,v.sumR)})).sort((a,b)=>b.score-a.score);
+  const m={};trades.filter(t=>t.ejecutado).forEach(t=>{const dow=new Date(t.date).getDay();if(!m[dow])m[dow]={label:DIAS_ES[dow],wins:0,losses:0,sumR:0};const r=getResult(t);if(r==="Win")m[dow].wins++;else if(r==="Loss")m[dow].losses++;m[dow].sumR+=t.rr;});
+  return Object.values(m).map(v=>{const wl=v.wins+v.losses;return{label:v.label,count:v.wins+v.losses+(/* BEs implicit */0),wr:wl?((v.wins/wl)*100).toFixed(0):0,score:wrScore(v.wins,v.losses,v.sumR)};}).sort((a,b)=>b.score-a.score);
 }
 function statsByWeekOfMonth(trades){
-  const m={};trades.filter(t=>t.ejecutado).forEach(t=>{const d=new Date(t.date);const wn=Math.ceil((d.getDate()+new Date(d.getFullYear(),d.getMonth(),1).getDay())/7);const k=`W${wn}`;if(!m[k])m[k]={label:`Semana ${wn}`,wins:0,total:0,sumR:0};if(getResult(t)==="Win")m[k].wins++;m[k].total++;m[k].sumR+=t.rr;});
-  return Object.values(m).map(v=>({label:v.label,count:v.total,wr:v.total?((v.wins/v.total)*100).toFixed(0):0,score:wrScore(v.wins,v.total,v.sumR)})).sort((a,b)=>b.score-a.score);
+  // Step 1: group trades by (year, month, weekNum) where weekNum = Mon-based ISO-style week within month
+  // Count distinct trading days (Mon-Fri) per week key to enforce min-3-days rule
+  const getWeekKey = (d) => {
+    // Week number within month: week containing the 1st is W1, etc. Mon-based.
+    const firstOfMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+    const firstDow = firstOfMonth.getDay(); // 0=Sun
+    const offset = (firstDow === 0 ? 6 : firstDow - 1); // days before first Mon
+    const wn = Math.floor((d.getDate() - 1 + offset) / 7) + 1;
+    return { yr: d.getFullYear(), mo: d.getMonth(), wn };
+  };
+
+  // Build per-week buckets with trade days count
+  const buckets = {}; // key -> { yr, mo, wn, tradeDays: Set, wins, losses, sumR }
+  trades.filter(t => t.ejecutado).forEach(t => {
+    const d = new Date(t.date);
+    const dow = d.getDay();
+    if (dow === 0 || dow === 6) return; // skip weekends
+    const { yr, mo, wn } = getWeekKey(d);
+    const k = `${yr}-${mo}-${wn}`;
+    if (!buckets[k]) buckets[k] = { yr, mo, wn, tradeDays: new Set(), wins: 0, losses: 0, sumR: 0 };
+    buckets[k].tradeDays.add(t.date);
+    const r = getResult(t);
+    if (r === "Win")  buckets[k].wins++;
+    else if (r === "Loss") buckets[k].losses++;
+    buckets[k].sumR += t.rr;
+  });
+
+  // Step 2: for each bucket with < 3 distinct trading days, merge into adjacent week (same month)
+  const keys = Object.keys(buckets).sort();
+  const merged = {}; // final label -> { wins, losses, sumR }
+
+  const getLabel = (yr, mo, wn) => `Semana ${wn}`;
+
+  // First pass: identify which weeks are short and need merging
+  const shortKeys = new Set(keys.filter(k => buckets[k].tradeDays.size < 3));
+
+  keys.forEach(k => {
+    const b = buckets[k];
+    let targetWn = b.wn;
+
+    if (shortKeys.has(k)) {
+      // Try prev week in same month first, then next week
+      const prevKey = `${b.yr}-${b.mo}-${b.wn - 1}`;
+      const nextKey = `${b.yr}-${b.mo}-${b.wn + 1}`;
+      if (buckets[prevKey] && !shortKeys.has(prevKey)) {
+        targetWn = b.wn - 1;
+      } else if (buckets[nextKey] && !shortKeys.has(nextKey)) {
+        targetWn = b.wn + 1;
+      } else if (buckets[prevKey]) {
+        targetWn = b.wn - 1; // merge even if also short
+      } else if (buckets[nextKey]) {
+        targetWn = b.wn + 1;
+      }
+      // else stays as its own (no adjacent week in same month)
+    }
+
+    const label = getLabel(b.yr, b.mo, targetWn);
+    if (!merged[label]) merged[label] = { label, wins: 0, losses: 0, sumR: 0 };
+    merged[label].wins   += b.wins;
+    merged[label].losses += b.losses;
+    merged[label].sumR   += b.sumR;
+  });
+
+  return Object.values(merged).map(v => {
+    const wl = v.wins + v.losses;
+    return { label: v.label, count: v.wins + v.losses, wr: wl ? ((v.wins/wl)*100).toFixed(0) : 0, score: wrScore(v.wins, v.losses, v.sumR) };
+  }).sort((a,b) => b.score - a.score);
 }
 function statsByMonth(trades){
-  const m={};trades.filter(t=>t.ejecutado).forEach(t=>{const mon=new Date(t.date).getMonth();const k=MESES_ES[mon];if(!m[k])m[k]={label:k,wins:0,total:0,sumR:0};if(getResult(t)==="Win")m[k].wins++;m[k].total++;m[k].sumR+=t.rr;});
-  return Object.values(m).map(v=>({label:v.label,count:v.total,wr:v.total?((v.wins/v.total)*100).toFixed(0):0,score:wrScore(v.wins,v.total,v.sumR)})).sort((a,b)=>b.score-a.score);
+  const m={};trades.filter(t=>t.ejecutado).forEach(t=>{const mon=new Date(t.date).getMonth();const k=MESES_ES[mon];if(!m[k])m[k]={label:k,wins:0,losses:0,sumR:0};const r=getResult(t);if(r==="Win")m[k].wins++;else if(r==="Loss")m[k].losses++;m[k].sumR+=t.rr;});
+  return Object.values(m).map(v=>{const wl=v.wins+v.losses;return{label:v.label,count:wl,wr:wl?((v.wins/wl)*100).toFixed(0):0,score:wrScore(v.wins,v.losses,v.sumR)};}).sort((a,b)=>b.score-a.score);
 }
 
 function getMentalPolarity(val) {
@@ -615,14 +682,21 @@ function PeriodSelector({ tf, periodId, onChange, trades }) {
 }
 
 function Sparkline({ trades, H=60 }) {
-  const exec = trades.filter(t => t.ejecutado);
-  const pts = useMemo(() => { let c=0; return exec.map(t => { c += t.pnl; return c; }); }, [exec.length]);
+  const exec = useMemo(() => [...trades.filter(t => t.ejecutado)].sort((a,b)=>new Date(a.date)-new Date(b.date)||(a.hora||"").localeCompare(b.hora||"")), [trades]);
+  const pts = useMemo(() => {
+    let c = 0;
+    const arr = [0]; // start from zero
+    exec.forEach(t => { c += t.pnl; arr.push(c); });
+    return arr;
+  }, [exec]);
   if (pts.length < 2) return <div style={{ color:G.textMuted, fontSize:10, padding:"18px 0", textAlign:"center" }}>Sin datos</div>;
   const W = 1000;
   const mn=Math.min(...pts,0), mx=Math.max(...pts,1), rng=mx-mn||1, p=8;
   const xs = pts.map((_,i) => p + (i/(pts.length-1)) * (W-p*2));
   const ys = pts.map(v => H-p - ((v-mn)/rng) * (H-p*2));
   const d  = xs.map((x,i) => `${i===0?"M":"L"}${x.toFixed(1)},${ys[i].toFixed(1)}`).join(" ");
+  // Zero line
+  const zeroY = (H-p - ((0-mn)/rng) * (H-p*2)).toFixed(1);
   const fill = `${d} L${W-p},${H} L${p},${H} Z`;
   const col = pts[pts.length-1] >= 0 ? G.accent : G.red;
   return (
@@ -633,6 +707,7 @@ function Sparkline({ trades, H=60 }) {
           <stop offset="100%" stopColor={col} stopOpacity="0"/>
         </linearGradient>
       </defs>
+      <line x1={p} y1={zeroY} x2={W-p} y2={zeroY} stroke={G.border} strokeWidth="1" strokeDasharray="4 4"/>
       <path d={fill} fill="url(#sg)"/>
       <path d={d} fill="none" stroke={col} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round"/>
       <circle cx={xs[xs.length-1]} cy={ys[ys.length-1]} r="6" fill={col} stroke={G.bg} strokeWidth="3"/>
@@ -724,7 +799,7 @@ function GroupBars({ data, barColor }) {
   if (!data.length) return <div style={{ color:G.textMuted, fontSize:11, textAlign:"center", padding:16 }}>Sin datos</div>;
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-      {data.map(d=>{const wr=d.total?((d.wins/d.total)*100).toFixed(0):0;return(<div key={d.label}><div style={{display:"flex",justifyContent:"space-between",marginBottom:4,fontSize:11}}><span>{d.label}<span style={{color:G.textSec,fontSize:10}}> ({d.total})</span></span><div style={{display:"flex",gap:10}}><span style={{color:pColor(d.pnl)}}>{fmtD(d.pnl)}</span><span style={{color:pColor(d.r)}}>{fmtR(d.r)}</span><span style={{color:G.textSec,width:30,textAlign:"right"}}>{wr}%</span></div></div><div style={{height:4,background:G.border,borderRadius:2,overflow:"hidden"}}><div style={{width:`${wr}%`,height:"100%",background:col,borderRadius:2}}/></div></div>);})}
+      {data.map(d=>{const wl=(d.wins||0)+(d.losses||0);const wr=wl?((d.wins/wl)*100).toFixed(0):0;return(<div key={d.label}><div style={{display:"flex",justifyContent:"space-between",marginBottom:4,fontSize:11}}><span>{d.label}<span style={{color:G.textSec,fontSize:10}}> ({d.total})</span></span><div style={{display:"flex",gap:10}}><span style={{color:pColor(d.pnl)}}>{fmtD(d.pnl)}</span><span style={{color:pColor(d.r)}}>{fmtR(d.r)}</span><span style={{color:G.textSec,width:30,textAlign:"right"}}>{wr}%</span></div></div><div style={{height:4,background:G.border,borderRadius:2,overflow:"hidden"}}><div style={{width:`${wr}%`,height:"100%",background:col,borderRadius:2}}/></div></div>);})}
     </div>
   );
 }
@@ -841,57 +916,60 @@ function EconomicCalendar() {
 
   // ── Detect user's local timezone offset vs Eastern Time ─────────────────
   // FF times are in Eastern Time. We convert them to the user's local time.
-  const localTZOffset = useMemo(() => {
-    // Returns difference in minutes: local - ET
-    // We compare what "now" is in ET vs local
+  // ── ET → Local time difference ──────────────────────────────────────────
+  // Approach: create a Date, ask JS what the clock shows in NY vs local.
+  // We use numeric hour/minute parts to avoid any string parsing issues.
+  const etToLocalDiffMin = useMemo(() => {
     const now = new Date();
-    const etStr  = now.toLocaleString("en-US", { timeZone:"America/New_York", hour:"numeric", minute:"numeric", hour12:false });
-    const locStr = now.toLocaleString("en-US", { hour:"numeric", minute:"numeric", hour12:false });
-    const toMin = s => { const [h,m] = s.split(":").map(Number); return h*60+(m||0); };
-    let diff = toMin(locStr) - toMin(etStr);
-    // Handle midnight crossover
-    if (diff > 720)  diff -= 1440;
+    const fmtParts = (tz) => {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz,
+        hour: "numeric", minute: "numeric", hour12: false,
+      }).formatToParts(now);
+      const h = parseInt(parts.find(p => p.type === "hour")?.value ?? "0");
+      const m = parseInt(parts.find(p => p.type === "minute")?.value ?? "0");
+      return h * 60 + m;
+    };
+    const etMin    = fmtParts("America/New_York");
+    const localTZ  = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const localMin = fmtParts(localTZ);
+    let diff = localMin - etMin;
+    if (diff >  720) diff -= 1440; // handle midnight crossover
     if (diff < -720) diff += 1440;
-    return diff; // minutes local is ahead of ET (negative if behind)
+    return diff; // minutes to ADD to ET time to get local time
   }, []);
 
-  // Convert "8:30am" / "8:30pm" (ET, 12h) → "HH:MM" local 24h
-  const convertTime = useCallback((timeStr) => {
-    if (!timeStr || timeStr === "All Day" || timeStr === "") return timeStr;
-    try {
-      const m = timeStr.match(/^(\d{1,2}):(\d{2})(am|pm)$/i);
-      if (!m) return timeStr;
-      let h = parseInt(m[1]);
-      const min = parseInt(m[2]);
-      const ampm = m[3].toLowerCase();
-      if (ampm === "pm" && h !== 12) h += 12;
-      if (ampm === "am" && h === 12) h = 0;
-      let totalMin = h * 60 + min + localTZOffset;
-      // normalize
-      totalMin = ((totalMin % 1440) + 1440) % 1440;
-      const lh = Math.floor(totalMin / 60);
-      const lm = totalMin % 60;
-      return `${String(lh).padStart(2,"0")}:${String(lm).padStart(2,"0")}`;
-    } catch { return timeStr; }
-  }, [localTZOffset]);
+  // Convert "8:30am" / "8:30pm" (ET, 12h) → "HH:MM" in user's local time
+  const etTimeToMinutes = (timeStr) => {
+    if (!timeStr || timeStr === "All Day" || timeStr === "") return null;
+    const m = timeStr.match(/^(\d{1,2}):(\d{2})(am|pm)$/i);
+    if (!m) return null;
+    let h = parseInt(m[1]);
+    const min = parseInt(m[2]);
+    const ampm = m[3].toLowerCase();
+    if (ampm === "pm" && h !== 12) h += 12;
+    if (ampm === "am" && h === 12) h = 0;
+    return h * 60 + min;
+  };
 
-  // Also adjust date if time crosses midnight
+  const convertTime = useCallback((timeStr) => {
+    const etMin = etTimeToMinutes(timeStr);
+    if (etMin === null) return timeStr;
+    let localMin = etMin + etToLocalDiffMin;
+    localMin = ((localMin % 1440) + 1440) % 1440; // normalize to 0–1439
+    const lh = Math.floor(localMin / 60);
+    const lm = localMin % 60;
+    return `${String(lh).padStart(2,"0")}:${String(lm).padStart(2,"0")}`;
+  }, [etToLocalDiffMin]);
+
   const dateShiftDays = useCallback((timeStr) => {
-    if (!timeStr || timeStr === "All Day") return 0;
-    try {
-      const m = timeStr.match(/^(\d{1,2}):(\d{2})(am|pm)$/i);
-      if (!m) return 0;
-      let h = parseInt(m[1]);
-      const min = parseInt(m[2]);
-      const ampm = m[3].toLowerCase();
-      if (ampm === "pm" && h !== 12) h += 12;
-      if (ampm === "am" && h === 12) h = 0;
-      let totalMin = h * 60 + min + localTZOffset;
-      if (totalMin < 0) return -1;
-      if (totalMin >= 1440) return 1;
-      return 0;
-    } catch { return 0; }
-  }, [localTZOffset]);
+    const etMin = etTimeToMinutes(timeStr);
+    if (etMin === null) return 0;
+    const localMin = etMin + etToLocalDiffMin;
+    if (localMin < 0) return -1;
+    if (localMin >= 1440) return 1;
+    return 0;
+  }, [etToLocalDiffMin]);
 
   const todayLocal = useMemo(() => {
     const d = new Date();
@@ -1149,7 +1227,7 @@ function EconomicCalendar() {
       <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10, paddingBottom:10, borderBottom:`1px solid ${G.border}` }}>
         {navBtn(() => setDayOffset(o => o - 1), "‹")}
         <div style={{ flex:1, textAlign:"center" }}>
-          <span style={{ fontSize:12, fontWeight:600, color:isToday ? G.accent : G.textPrimary }}>{dateLabel}</span>
+          <span style={{ fontSize:12, fontWeight:600, color:isToday ? G.blue : G.textPrimary }}>{dateLabel}</span>
         </div>
         {navBtn(() => setDayOffset(o => o + 1), "›")}
       </div>
@@ -1255,28 +1333,32 @@ function buildMetricasReport(stats, trades, periodLabel) {
   // Setup breakdown
   const setupMap = {};
   exec.forEach(t => {
-    if (!setupMap[t.setup]) setupMap[t.setup] = { total:0, wins:0, pnl:0, r:0 };
+    if (!setupMap[t.setup]) setupMap[t.setup] = { total:0, wins:0, losses:0, pnl:0, r:0 };
     setupMap[t.setup].total++;
-    if (getResult(t) === "Win") setupMap[t.setup].wins++;
+    const r = getResult(t);
+    if (r === "Win") setupMap[t.setup].wins++;
+    else if (r === "Loss") setupMap[t.setup].losses++;
     setupMap[t.setup].pnl += t.pnl;
     setupMap[t.setup].r   += t.rr;
   });
   const setupLines = Object.entries(setupMap)
     .sort(([,a],[,b]) => b.pnl - a.pnl)
-    .map(([s,d]) => `- **${s}**: ${d.total} trades · WR ${d.total ? ((d.wins/d.total)*100).toFixed(0) : 0}% · PnL ${fmtD(d.pnl)} · ${fmtR(d.r)}`)
+    .map(([s,d]) => { const wl=d.wins+d.losses; return `- **${s}**: ${d.total} trades · WR ${wl ? ((d.wins/wl)*100).toFixed(0) : 0}% · PnL ${fmtD(d.pnl)} · ${fmtR(d.r)}`; })
     .join("\n");
 
   // Session breakdown
   const sesMap = {};
   exec.forEach(t => {
-    if (!sesMap[t.sesion]) sesMap[t.sesion] = { total:0, wins:0, pnl:0 };
+    if (!sesMap[t.sesion]) sesMap[t.sesion] = { total:0, wins:0, losses:0, pnl:0 };
     sesMap[t.sesion].total++;
-    if (getResult(t) === "Win") sesMap[t.sesion].wins++;
+    const r = getResult(t);
+    if (r === "Win") sesMap[t.sesion].wins++;
+    else if (r === "Loss") sesMap[t.sesion].losses++;
     sesMap[t.sesion].pnl += t.pnl;
   });
   const sesLines = Object.entries(sesMap)
     .sort(([,a],[,b]) => b.pnl - a.pnl)
-    .map(([s,d]) => `- **${s}**: ${d.total} trades · WR ${d.total ? ((d.wins/d.total)*100).toFixed(0) : 0}% · PnL ${fmtD(d.pnl)}`)
+    .map(([s,d]) => { const wl=d.wins+d.losses; return `- **${s}**: ${d.total} trades · WR ${wl ? ((d.wins/wl)*100).toFixed(0) : 0}% · PnL ${fmtD(d.pnl)}`; })
     .join("\n");
 
   // Day of week
@@ -1285,14 +1367,16 @@ function buildMetricasReport(stats, trades, periodLabel) {
     const[yrS,moS,dyS]=t.date.split("-");
     const dow = new Date(parseInt(yrS), parseInt(moS)-1, parseInt(dyS)).getDay();
     const label = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"][dow];
-    if (!dowMap[label]) dowMap[label] = { total:0, wins:0, pnl:0 };
+    if (!dowMap[label]) dowMap[label] = { total:0, wins:0, losses:0, pnl:0 };
     dowMap[label].total++;
-    if (getResult(t) === "Win") dowMap[label].wins++;
+    const r = getResult(t);
+    if (r === "Win") dowMap[label].wins++;
+    else if (r === "Loss") dowMap[label].losses++;
     dowMap[label].pnl += t.pnl;
   });
   const dowLines = Object.entries(dowMap)
     .sort(([,a],[,b]) => b.pnl - a.pnl)
-    .map(([d,v]) => `- **${d}**: ${v.total} trades · WR ${v.total ? ((v.wins/v.total)*100).toFixed(0) : 0}% · PnL ${fmtD(v.pnl)}`)
+    .map(([d,v]) => { const wl=v.wins+v.losses; return `- **${d}**: ${v.total} trades · WR ${wl ? ((v.wins/wl)*100).toFixed(0) : 0}% · PnL ${fmtD(v.pnl)}`; })
     .join("\n");
 
   const avgWin  = wins.length  ? (wins.reduce((s,t)=>s+t.pnl,0)/wins.length).toFixed(0)   : "0";
@@ -1359,15 +1443,17 @@ function buildEdgeReport(stats, trades, periodLabel) {
   // Setup breakdown (solo válidos, >=3)
   const setupMap = {};
   validExec.forEach(t => {
-    if (!setupMap[t.setup]) setupMap[t.setup] = { total:0, wins:0, r:0, pnl:0 };
+    if (!setupMap[t.setup]) setupMap[t.setup] = { total:0, wins:0, losses:0, r:0, pnl:0 };
     setupMap[t.setup].total++;
-    if (getResult(t) === "Win") setupMap[t.setup].wins++;
+    const res = getResult(t);
+    if (res === "Win") setupMap[t.setup].wins++;
+    else if (res === "Loss") setupMap[t.setup].losses++;
     setupMap[t.setup].r   += t.rr;
     setupMap[t.setup].pnl += t.pnl;
   });
   const setupLines = Object.entries(setupMap)
     .sort(([,a],[,b]) => b.pnl - a.pnl)
-    .map(([s,d]) => `- **${s}**: ${d.total} ejec. · WR ${d.total ? ((d.wins/d.total)*100).toFixed(0) : 0}% · ${fmtR(d.r)} · PnL ${fmtD(d.pnl)}`)
+    .map(([s,d]) => { const wl=d.wins+d.losses; return `- **${s}**: ${d.total} ejec. · WR ${wl ? ((d.wins/wl)*100).toFixed(0) : 0}% · ${fmtR(d.r)} · PnL ${fmtD(d.pnl)}`; })
     .join("\n");
 
   return `## EDGE REALIZATION REPORT — ${periodLabel}
@@ -1412,12 +1498,14 @@ function buildMentalReport(trades, periodLabel) {
   trades.forEach(t => {
     const s = t.estado_mental;
     if (!s) return;
-    if (!m[s]) m[s] = { total:0, exec:0, wins:0, netPnl:0, missed:0, avoided:0, polarity: getMentalPolarity(s) };
+    if (!m[s]) m[s] = { total:0, exec:0, wins:0, losses:0, netPnl:0, missed:0, avoided:0, polarity: getMentalPolarity(s) };
     m[s].total++;
     if (t.ejecutado) {
       m[s].exec++;
       m[s].netPnl += t.pnl;
-      if (getResult(t) === "Win") m[s].wins++;
+      const res = getResult(t);
+      if (res === "Win") m[s].wins++;
+      else if (res === "Loss") m[s].losses++;
     } else {
       if (t.rr > 0) m[s].missed  += Math.abs(t.pnl);
       if (t.rr < 0) m[s].avoided += Math.abs(t.pnl);
@@ -1427,7 +1515,8 @@ function buildMentalReport(trades, periodLabel) {
   const rows = Object.entries(m)
     .sort(([,a],[,b]) => b.netPnl - a.netPnl)
     .map(([state, d]) => {
-      const wr = d.exec > 0 ? ((d.wins/d.exec)*100).toFixed(0) : "—";
+      const wl = d.wins + d.losses;
+      const wr = wl > 0 ? ((d.wins/wl)*100).toFixed(0) : "—";
       const pol = d.polarity === "positive" ? "▲" : d.polarity === "negative" ? "▼" : "·";
       return `- ${pol} **${state}**: ${d.exec}/${d.total} ejecutados · WR ${wr}% · Net PnL ${fmtD(d.netPnl)} · Missed ${d.missed>0?fmtD(d.missed):"—"} · Avoided ${d.avoided>0?fmtD(d.avoided):"—"}`;
     })
@@ -1812,7 +1901,7 @@ export default function App() {
   function groupByKey(arr,key,onlyExec=true){const m={};arr.filter(t=>onlyExec?t.ejecutado:true).forEach(t=>{const k=t[key]||"Otro";if(!m[k])m[k]={wins:0,total:0,pnl:0,r:0};if(getResult(t)==="Win")m[k].wins++;m[k].total++;m[k].pnl+=t.pnl;m[k].r+=t.rr;});return Object.entries(m).sort(([,a],[,b])=>b.pnl-a.pnl).map(([label,d])=>({label,...d}));}
 
   const confAnalysis=useMemo(()=>{const c={cb:{wins:0,total:0,pnl:0,r:0},dc:{wins:0,total:0,pnl:0,r:0},both:{wins:0,total:0,pnl:0,r:0}};analTrades.forEach(t=>{const hasCB=(t.confluencias||[]).includes("Candle Bias");const hasDC=(t.confluencias||[]).includes("Daily Cycle");const add=key=>{if(getResult(t)==="Win")c[key].wins++;c[key].total++;c[key].pnl+=t.pnl;c[key].r+=t.rr;};if(hasCB&&hasDC)add("both");else if(hasCB)add("cb");else if(hasDC)add("dc");});return[{label:"Candle Bias",...c.cb},{label:"Daily Cycle",...c.dc},{label:"Ambos",...c.both}].filter(d=>d.total>0);},[analTrades]);
-  const validAnalysis=useMemo(()=>[1,2,3,4].map(n=>{const vt=analTrades.filter(t=>t.validez===n);return{n,total:vt.length,wins:vt.filter(t=>getResult(t)==="Win").length,pnl:vt.reduce((s,t)=>s+t.pnl,0),r:vt.reduce((s,t)=>s+t.rr,0)};}).filter(d=>d.total>0),[analTrades]);
+  const validAnalysis=useMemo(()=>[1,2,3,4].map(n=>{const vt=analTrades.filter(t=>t.validez===n&&t.ejecutado);return{n,total:vt.length,wins:vt.filter(t=>getResult(t)==="Win").length,losses:vt.filter(t=>getResult(t)==="Loss").length,pnl:vt.reduce((s,t)=>s+t.pnl,0),r:vt.reduce((s,t)=>s+t.rr,0)};}).filter(d=>d.total>0),[analTrades]);
   const dayStats  =useMemo(()=>statsByDayOfWeek(trades),[trades]);
   const weekStats =useMemo(()=>statsByWeekOfMonth(trades),[trades]);
   const monthStats=useMemo(()=>statsByMonth(trades),[trades]);
@@ -1821,7 +1910,7 @@ export default function App() {
   const marketStats=useMemo(()=>MERCADOS.map(m=>{const mt=filteredTrades.filter(t=>t.mercado===m&&t.ejecutado);if(!mt.length)return null;return{m,pnl:mt.reduce((s,t)=>s+t.pnl,0),r:mt.reduce((s,t)=>s+t.rr,0),wr:((mt.filter(t=>getResult(t)==="Win").length/mt.length)*100).toFixed(0),len:mt.length};}).filter(Boolean),[filteredTrades]);
   const sesionStats=useMemo(()=>SESIONES.map(s=>{const st=filteredTrades.filter(t=>t.sesion===s&&t.ejecutado);if(!st.length)return null;return{s,pnl:st.reduce((a,t)=>a+t.pnl,0),r:st.reduce((a,t)=>a+t.rr,0),wr:((st.filter(t=>getResult(t)==="Win").length/st.length)*100).toFixed(0),len:st.length};}).filter(Boolean),[filteredTrades]);
   const dominantEmotion=useMemo(()=>{const counts={};filteredTrades.forEach(t=>{const s=t.estado_mental;if(s)counts[s]=(counts[s]||0)+1;});if(!Object.keys(counts).length)return null;const top=Object.entries(counts).sort(([,a],[,b])=>b-a)[0];return{state:top[0],count:top[1],total:filteredTrades.length,polarity:getMentalPolarity(top[0])};},[filteredTrades]);
-  const mentalStateAnalysis=useMemo(()=>{const m={};analTrades.forEach(t=>{const s=t.estado_mental;if(!s)return;if(!m[s])m[s]={total:0,exec:0,wins:0,netPnl:0,missedProfit:0,avoidedLoss:0};m[s].total++;if(t.ejecutado){m[s].exec++;m[s].netPnl+=t.pnl;if(getResult(t)==="Win")m[s].wins++;}else{if(t.rr>0)m[s].missedProfit+=Math.abs(t.pnl);if(t.rr<0)m[s].avoidedLoss+=Math.abs(t.pnl);}});return Object.entries(m).map(([state,d])=>({state,total:d.total,exec:d.exec,wins:d.wins,netPnl:d.netPnl,missedProfit:d.missedProfit,avoidedLoss:d.avoidedLoss,winRate:d.exec>0?((d.wins/d.exec)*100).toFixed(0):"—",polarity:getMentalPolarity(state)})).sort((a,b)=>b.netPnl-a.netPnl);},[analTrades]);
+  const mentalStateAnalysis=useMemo(()=>{const m={};analTrades.forEach(t=>{const s=t.estado_mental;if(!s)return;if(!m[s])m[s]={total:0,exec:0,wins:0,losses:0,netPnl:0,missedProfit:0,avoidedLoss:0};m[s].total++;if(t.ejecutado){m[s].exec++;m[s].netPnl+=t.pnl;const r=getResult(t);if(r==="Win")m[s].wins++;else if(r==="Loss")m[s].losses++;}else{if(t.rr>0)m[s].missedProfit+=Math.abs(t.pnl);if(t.rr<0)m[s].avoidedLoss+=Math.abs(t.pnl);}});return Object.entries(m).map(([state,d])=>{const wl=d.wins+d.losses;return{state,total:d.total,exec:d.exec,wins:d.wins,netPnl:d.netPnl,missedProfit:d.missedProfit,avoidedLoss:d.avoidedLoss,winRate:wl>0?((d.wins/wl)*100).toFixed(0):"—",polarity:getMentalPolarity(state)};}).sort((a,b)=>b.netPnl-a.netPnl);},[analTrades]);
 
   // ── CRUD wrappers (compatibles con modo demo y Supabase) ──────────────────
   async function addTrade(t) {
