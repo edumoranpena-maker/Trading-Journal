@@ -381,7 +381,7 @@ const REPORT_TF_OPTS = [{id:"monthly",label:"Mensual"},{id:"quarterly",label:"Tr
 function detectMercado(pair) {
   const p = (pair||"").toUpperCase();
   if (["XAU","XAG","CL","NG","HG","OIL","GOLD","SILVER","CRUDE","GAS","CORN","WHEAT","ZC","ZW","ZS"].some(c=>p.includes(c))) return "Commodities";
-  if (["DAX","NQ","ES","YM","NAS","DOW","SPX","FTSE","CAC","NIKKEI","NASDAQ","SP500","DJ","MNQ","MES","MYM"].some(c=>p.includes(c))) return "Índices";
+  if (["DAX","NQ","ES","YM","NAS","DOW","SPX","FTSE","CAC","NIKKEI","NASDAQ","SP500","US500","DJ","MNQ","MES","MYM","US30","US100","NAS100","UK100","GER30","GER40","AUS200","JPN225","USTEC","USOIL","WTI"].some(c=>p.includes(c))) return "Índices";
   return "Forex";
 }
 function getResult(t) {
@@ -1492,20 +1492,15 @@ function buildMetricasReport(stats, trades, periodLabel) {
   const bes     = exec.filter(t => getResult(t) === "BE");
   const nonExec = trades.filter(t => !t.ejecutado);
 
-  // Setup breakdown
-  const setupMap = {};
-  exec.forEach(t => {
-    if (!setupMap[t.setup]) setupMap[t.setup] = { total:0, wins:0, losses:0, pnl:0, r:0 };
-    setupMap[t.setup].total++;
-    const r = getResult(t);
-    if (r === "Win") setupMap[t.setup].wins++;
-    else if (r === "Loss") setupMap[t.setup].losses++;
-    setupMap[t.setup].pnl += t.pnl;
-    setupMap[t.setup].r   += t.rr;
-  });
-  const setupLines = Object.entries(setupMap)
-    .sort(([,a],[,b]) => b.pnl - a.pnl)
-    .map(([s,d]) => { const wl=d.wins+d.losses; return `- **${s}**: ${d.total} trades · WR ${wl ? ((d.wins/wl)*100).toFixed(0) : 0}% · PnL ${fmtD(d.pnl)} · ${fmtR(d.r)}`; })
+  // Execution sequence (sorted by date)
+  const sorted = [...exec].sort((a,b) => new Date(a.date) - new Date(b.date));
+  const validCount = sorted.filter(t => t.validez >= 3).length;
+  const seqLines = sorted
+    .map((t,i) => {
+      const r = getResult(t);
+      const tag = r === "Win" ? "W" : r === "Loss" ? "L" : "BE";
+      return `- **#${i+1}** ${t.date} · ${t.pair} · ${tag} · ${fmtD(t.pnl)} · ${fmtR(t.rr)}${t.validez >= 3 ? " ✓" : ""}`;
+    })
     .join("\n");
 
   // Session breakdown
@@ -1523,21 +1518,10 @@ function buildMetricasReport(stats, trades, periodLabel) {
     .map(([s,d]) => { const wl=d.wins+d.losses; return `- **${s}**: ${d.total} trades · WR ${wl ? ((d.wins/wl)*100).toFixed(0) : 0}% · PnL ${fmtD(d.pnl)}`; })
     .join("\n");
 
-  // Day of week
-  const dowMap = {};
-  exec.forEach(t => {
-    const dow = parseLocalDate(t.date).getDay();
-    const label = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"][dow];
-    if (!dowMap[label]) dowMap[label] = { total:0, wins:0, losses:0, pnl:0 };
-    dowMap[label].total++;
-    const r = getResult(t);
-    if (r === "Win") dowMap[label].wins++;
-    else if (r === "Loss") dowMap[label].losses++;
-    dowMap[label].pnl += t.pnl;
-  });
-  const dowLines = Object.entries(dowMap)
-    .sort(([,a],[,b]) => b.pnl - a.pnl)
-    .map(([d,v]) => { const wl=v.wins+v.losses; return `- **${d}**: ${v.total} trades · WR ${wl ? ((v.wins/wl)*100).toFixed(0) : 0}% · PnL ${fmtD(v.pnl)}`; })
+  // Week of month breakdown
+  const womData = statsByWeekOfMonth(exec);
+  const womLines = womData
+    .map(v => `- **${v.label}**: ${v.count} trades · WR ${v.wr}%`)
     .join("\n");
 
   const avgWin  = wins.length  ? (wins.reduce((s,t)=>s+t.pnl,0)/wins.length).toFixed(0)   : "0";
@@ -1561,14 +1545,15 @@ function buildMetricasReport(stats, trades, periodLabel) {
 - **Mejor racha ganadora**: ${stats.bestStreak} trades consecutivos
 - **Peor racha perdedora**: ${Math.abs(stats.worstStreak)} trades consecutivos
 
-### Rendimiento por Setup
-${setupLines || "- Sin datos suficientes"}
+### Secuencia de resultados
+- **Trades ejecutados**: ${exec.length} · **Válidos (≥3)**: ${validCount}
+${seqLines || "- Sin datos suficientes"}
 
 ### Rendimiento por Sesión
 ${sesLines || "- Sin datos suficientes"}
 
-### Rendimiento por Día de la Semana
-${dowLines || "- Sin datos suficientes"}
+### Rendimiento por semana del mes
+${womLines || "- Sin datos suficientes"}
 `;
 }
 
@@ -2357,14 +2342,66 @@ export default function App() {
         )}
 
         {/* ══════════ ANALYSIS ═════════════════════════════════════════════ */}
-        {tab === "analisis" && (
+        {tab === "analisis" && (()=>{
+          // ── Executor metrics ────────────────────────────────────────────
+          const atExec    = analTrades.filter(t=>t.ejecutado);
+          const atNonExec = analTrades.filter(t=>!t.ejecutado);
+          const atValid   = analTrades.filter(t=>t.validez>=3);
+          const atValidExec    = atValid.filter(t=>t.ejecutado);
+          const atValidNonExec = atValid.filter(t=>!t.ejecutado);
+
+          // Execution Efficiency
+          const execR   = atExec.reduce((s,t)=>s+t.rr,0);
+          const missedR = atValidNonExec.reduce((s,t)=>s+t.rr,0);
+          const totalAvailR = execR + missedR;
+          const execEff = totalAvailR!==0 ? Math.max(0,Math.min(100,(execR/totalAvailR)*100)) : null;
+          const execEffStatus = execEff===null?"—":execEff>=85?"Elite Execution":execEff>=65?"Good Execution":execEff>=40?"Inconsistent Execution":"Critical Underexecution";
+          const execEffCol    = execEff===null?G.textMuted:execEff>=85?G.accent:execEff>=65?G.blue:execEff>=40?G.yellow:G.red;
+
+          // Cost of Inaction
+          const coiR        = atValidNonExec.reduce((s,t)=>s+t.rr,0);
+          const coiCount    = atValidNonExec.length;
+          const coiAvg      = coiCount>0?(coiR/coiCount).toFixed(2):"0.00";
+          const coiWinners  = atValidNonExec.filter(t=>t.rr>0);
+          const coiLosers   = atValidNonExec.filter(t=>t.rr<0);
+          const coiBigWin   = coiWinners.length?Math.max(...coiWinners.map(t=>t.rr)):null;
+          const coiBigLoss  = coiLosers.length?Math.min(...coiLosers.map(t=>t.rr)):null;
+
+          // Trust Deviation Index
+          const totalValid  = atValid.length;
+          const tdi = totalValid>0?((1-(atValidExec.length/totalValid))*100):null;
+          const tdiStatus = tdi===null?"—":tdi<=15?"High System Trust":tdi<=35?"Moderate Deviation":"Low Trust Alignment";
+          const tdiCol    = tdi===null?G.textMuted:tdi<=15?G.accent:tdi<=35?G.yellow:G.red;
+
+          // Execution Insight
+          const getInsight = ()=>{
+            if(execEff===null||tdi===null) return "Sin datos suficientes para generar un insight.";
+            if(execEff>=85&&tdi<=15) return "You are capturing most of your system's edge consistently.";
+            if(coiR>Math.abs(execR)*0.5&&execEff<65) return "Missed valid setups are causing significant performance leakage.";
+            if(tdi>35) return "Current data suggests inaction is creating more damage than losing trades.";
+            if(execEff<40) return "Execution inconsistency is limiting overall results.";
+            if(tdi<=15) return "You are highly aligned with your trading plan.";
+            return "Execution inconsistency is limiting overall results.";
+          };
+
+          return (
           <div className="fade-up">
+            {/* Header + Period selectors */}
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:18 }}>
               <div><h1 style={{ fontFamily:G.fontUI, fontSize:22, fontWeight:700, letterSpacing:"-0.03em", marginBottom:2 }}>{T("More Stats")}</h1><p style={{ fontSize:11, color:G.textSec }}>{analTrades.length} {T("registros en el período")}</p></div>
               <TFSelector value={analTf} onChange={v=>{setAnalTf(v);}} options={mkAnalTfOpts(T)}/>
             </div>
-            <div style={{ marginBottom:16 }}><PeriodSelector tf={analTf} periodId={analPeriod} onChange={setAnalPeriod} trades={trades}/></div>
-            {/* Setup Performance */}
+            <div style={{ marginBottom:24 }}><PeriodSelector tf={analTf} periodId={analPeriod} onChange={setAnalPeriod} trades={trades}/></div>
+
+            {/* ── SECCIÓN 1: Desempeño del Sistema ── */}
+            <div style={{ marginBottom:8 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
+                <div style={{ width:3, height:18, background:G.accent, borderRadius:2 }}/>
+                <span style={{ fontSize:13, fontWeight:700, fontFamily:G.fontDisplay, letterSpacing:"-0.01em" }}>Desempeño del Sistema</span>
+                <div style={{ flex:1, height:1, background:G.border, marginLeft:4 }}/>
+              </div>
+            </div>
+            {/* Por Setup + Por Mercado */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
                 <SectionHeader title={T("Por Setup")}/>
@@ -2375,7 +2412,7 @@ export default function App() {
                 <GroupBars data={groupByKey(analTrades,"mercado")} barColor={G.blue}/>
               </div>
             </div>
-            {/* Confluencias & Validez */}
+            {/* Por Confluencias + Por Validez */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
                 <SectionHeader title={T("Por Confluencias")}/>
@@ -2386,9 +2423,147 @@ export default function App() {
                 <GroupBars data={validAnalysis.map(d=>({...d,label:`${T("Validez")} ${d.n}`}))} barColor={G.blue}/>
               </div>
             </div>
-            {/* Calendar */}
-            {/* Mental State Analysis */}
-            <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12 }}>
+            {/* Mejor / Peor */}
+            <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:32 }}>
+              <div style={{ fontSize:9, color:G.textSec, letterSpacing:"0.14em", textTransform:"uppercase", marginBottom:14, fontFamily:G.fontDisplay }}>{T("MEJOR / PEOR — basado en win rate histórico (todos los datos)")}</div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+                <BWCard label={T("Mejor Semana")} arr={weekStats}  best={true}/>
+                <BWCard label={T("Mejor Día")}    arr={dayStats}   best={true}/>
+                <BWCard label={T("Mejor Mes")}    arr={monthStats} best={true}/>
+                <BWCard label={T("Peor Semana")}  arr={weekStats}  best={false}/>
+                <BWCard label={T("Peor Día")}     arr={dayStats}   best={false}/>
+                <BWCard label={T("Peor Mes")}     arr={monthStats} best={false}/>
+              </div>
+            </div>
+
+            {/* ── SECCIÓN 2: Desempeño del Ejecutor ── */}
+            <div style={{ marginBottom:8 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
+                <div style={{ width:3, height:18, background:G.blue, borderRadius:2 }}/>
+                <span style={{ fontSize:13, fontWeight:700, fontFamily:G.fontDisplay, letterSpacing:"-0.01em" }}>Desempeño del Ejecutor</span>
+                <div style={{ flex:1, height:1, background:G.border, marginLeft:4 }}/>
+              </div>
+            </div>
+
+            {/* 3 metric cards */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:12 }}>
+
+              {/* Execution Efficiency */}
+              <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:12 }}>
+                <SectionHeader title="Execution Efficiency"/>
+                <div style={{ fontSize:36, fontWeight:800, fontFamily:G.fontUI, color:execEffCol, lineHeight:1, letterSpacing:"-0.04em" }}>
+                  {execEff!==null?`${execEff.toFixed(1)}%`:"—"}
+                </div>
+                <div style={{ display:"inline-flex", alignSelf:"flex-start", background:`${execEffCol}18`, border:`1px solid ${execEffCol}44`, borderRadius:5, padding:"3px 9px" }}>
+                  <span style={{ fontSize:9, fontWeight:600, color:execEffCol, fontFamily:G.fontDisplay, letterSpacing:"0.06em" }}>{execEffStatus}</span>
+                </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:4 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
+                    <span style={{ color:G.textSec }}>Executed R</span>
+                    <span style={{ color:pColor(execR), fontFamily:G.fontMono, fontWeight:600 }}>{fmtR(execR)}</span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
+                    <span style={{ color:G.textSec }}>Missed R</span>
+                    <span style={{ color:pColor(missedR), fontFamily:G.fontMono, fontWeight:600 }}>{fmtR(missedR)}</span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, paddingTop:6, borderTop:`1px solid ${G.border}` }}>
+                    <span style={{ color:G.textSec }}>Total Available R</span>
+                    <span style={{ color:G.textPrimary, fontFamily:G.fontMono, fontWeight:600 }}>{fmtR(totalAvailR)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Cost of Inaction */}
+              <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:12 }}>
+                <SectionHeader title="Cost of Inaction"/>
+                <div style={{ fontSize:36, fontWeight:800, fontFamily:G.fontUI, color:pColor(coiR), lineHeight:1, letterSpacing:"-0.04em" }}>
+                  {fmtR(coiR)}
+                </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:4 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
+                    <span style={{ color:G.textSec }}>Missed Valid Trades</span>
+                    <span style={{ color:G.textPrimary, fontFamily:G.fontMono, fontWeight:600 }}>{coiCount}</span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
+                    <span style={{ color:G.textSec }}>Avg Missed Trade R</span>
+                    <span style={{ color:pColor(parseFloat(coiAvg)), fontFamily:G.fontMono, fontWeight:600 }}>{fmtR(parseFloat(coiAvg))}</span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
+                    <span style={{ color:G.textSec }}>Largest Missed Winner</span>
+                    <span style={{ color:G.accent, fontFamily:G.fontMono, fontWeight:600 }}>{coiBigWin!==null?`+${coiBigWin.toFixed(2)}R`:"—"}</span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
+                    <span style={{ color:G.textSec }}>Largest Missed Loser</span>
+                    <span style={{ color:G.red, fontFamily:G.fontMono, fontWeight:600 }}>{coiBigLoss!==null?`${coiBigLoss.toFixed(2)}R`:"—"}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Trust Deviation Index */}
+              <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:12 }}>
+                <SectionHeader title="Trust Deviation Index"/>
+                <div style={{ fontSize:36, fontWeight:800, fontFamily:G.fontUI, color:tdiCol, lineHeight:1, letterSpacing:"-0.04em" }}>
+                  {tdi!==null?`${tdi.toFixed(1)}%`:"—"}
+                </div>
+                <div style={{ display:"inline-flex", alignSelf:"flex-start", background:`${tdiCol}18`, border:`1px solid ${tdiCol}44`, borderRadius:5, padding:"3px 9px" }}>
+                  <span style={{ fontSize:9, fontWeight:600, color:tdiCol, fontFamily:G.fontDisplay, letterSpacing:"0.06em" }}>{tdiStatus}</span>
+                </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:4 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
+                    <span style={{ color:G.textSec }}>Valid Trades</span>
+                    <span style={{ color:G.textPrimary, fontFamily:G.fontMono, fontWeight:600 }}>{totalValid}</span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
+                    <span style={{ color:G.textSec }}>Executed</span>
+                    <span style={{ color:G.accent, fontFamily:G.fontMono, fontWeight:600 }}>{atValidExec.length}</span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
+                    <span style={{ color:G.textSec }}>Missed</span>
+                    <span style={{ color:G.red, fontFamily:G.fontMono, fontWeight:600 }}>{atValidNonExec.length}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Execution Insight */}
+            <div style={{ background:`${G.blue}0e`, border:`1px solid ${G.blue}33`, borderRadius:10, padding:"14px 18px", marginBottom:12, display:"flex", alignItems:"flex-start", gap:12 }}>
+              <span style={{ fontSize:16, flexShrink:0, marginTop:1 }}>💡</span>
+              <div>
+                <div style={{ fontSize:9, color:G.blue, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:4 }}>Execution Insight</div>
+                <div style={{ fontSize:12, color:G.textPrimary, lineHeight:1.6 }}>{getInsight()}</div>
+              </div>
+            </div>
+
+            {/* Secuencia de Ejecución */}
+            <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:32 }}>
+              <SectionHeader title={T("Secuencia de Ejecución — Todos los Meses")}/>
+              {!monthlySeqs.length&&<div style={{color:G.textMuted,fontSize:11}}>Sin datos</div>}
+              <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+                {monthlySeqs.map(({label,trades:mt})=>{
+                  const count=mt.length,validCount=mt.filter(t=>t.validez>=3).length,achieved=validCount>=6;
+                  const boxes=Math.max(10,count+(10-count%10===10?0:10-count%10));
+                  const sorted=[...mt].sort((a,b)=>new Date(a.date)-new Date(b.date));
+                  const resC=r=>r==="Win"?G.accent:r==="Loss"?G.red:r==="BE"?G.white:G.border;
+                  const resBg=r=>r==="Win"?`${G.accent}22`:r==="Loss"?`${G.red}22`:r==="BE"?"rgba(232,237,248,0.08)":"transparent";
+                  return(
+                    <div key={label}>
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}><span style={{fontSize:11,fontWeight:600,fontFamily:G.fontDisplay}}>{label}</span>{achieved&&<span style={{fontSize:13}}>🏆</span>}<span style={{fontSize:9,color:G.textSec,marginLeft:"auto"}}>{validCount} válidos · {count} ejec.</span></div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{Array.from({length:boxes}).map((_,i)=>{const t=sorted[i],r=t?getResult(t):null,counts=t&&t.validez>=3;return(<div key={i} title={t?`${t.date} · ${t.pair} · ${r||"BE"}`:""} style={{width:24,height:24,borderRadius:"50%",background:r?resBg(r):G.surfaceAlt,border:`2px solid ${r?resC(r):G.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:r?resC(r):G.textMuted,fontWeight:700,flexShrink:0,boxShadow:counts&&r?`0 0 5px ${resC(r)}44`:"none",opacity:t&&!counts?0.4:1}}>{r==="Win"?"W":r==="Loss"?"L":r==="BE"?"B":""}</div>);})}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* ── SECCIÓN 3: Performance Psicológico ── */}
+            <div style={{ marginBottom:8 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
+                <div style={{ width:3, height:18, background:G.yellow, borderRadius:2 }}/>
+                <span style={{ fontSize:13, fontWeight:700, fontFamily:G.fontDisplay, letterSpacing:"-0.01em" }}>Performance Psicológico</span>
+                <div style={{ flex:1, height:1, background:G.border, marginLeft:4 }}/>
+              </div>
+            </div>
+            <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:32 }}>
               <SectionHeader title={T("Mental State vs Performance")}/>
               {!mentalStateAnalysis.length&&<div style={{color:G.textMuted,fontSize:11,textAlign:"center",padding:"18px 0"}}>{T("Sin datos de estado mental en este período")}</div>}
               <div style={{ overflowX:"auto" }}>
@@ -2414,51 +2589,28 @@ export default function App() {
                 </table>
               </div>
             </div>
-            {/* Best/Worst */}
-            <div style={{ marginBottom:4 }}>
-              <div style={{ fontSize:9, color:G.textSec, marginBottom:8, fontFamily:G.fontDisplay }}>{T("MEJOR / PEOR — basado en win rate histórico (todos los datos)")}</div>
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:12 }}>
-              <BWCard label={T("Mejor Semana")} arr={weekStats}  best={true}/>
-              <BWCard label={T("Mejor Día")}    arr={dayStats}   best={true}/>
-              <BWCard label={T("Mejor Mes")}    arr={monthStats} best={true}/>
-              <BWCard label={T("Peor Semana")}  arr={weekStats}  best={false}/>
-              <BWCard label={T("Peor Día")}     arr={dayStats}   best={false}/>
-              <BWCard label={T("Peor Mes")}     arr={monthStats} best={false}/>
-            </div>
-            {/* Monthly Sequences */}
-            <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12 }}>
-              <SectionHeader title={T("Secuencia de Ejecución — Todos los Meses")}/>
-              {!monthlySeqs.length&&<div style={{color:G.textMuted,fontSize:11}}>Sin datos</div>}
-              <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
-                {monthlySeqs.map(({label,trades:mt})=>{
-                  const count=mt.length,validCount=mt.filter(t=>t.validez>=3).length,achieved=validCount>=6;
-                  const boxes=Math.max(10,count+(10-count%10===10?0:10-count%10));
-                  const sorted=[...mt].sort((a,b)=>new Date(a.date)-new Date(b.date));
-                  const resC=r=>r==="Win"?G.accent:r==="Loss"?G.red:r==="BE"?G.white:G.border;
-                  const resBg=r=>r==="Win"?`${G.accent}22`:r==="Loss"?`${G.red}22`:r==="BE"?"rgba(232,237,248,0.08)":"transparent";
-                  return(
-                    <div key={label}>
-                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}><span style={{fontSize:11,fontWeight:600,fontFamily:G.fontDisplay}}>{label}</span>{achieved&&<span style={{fontSize:13}}>🏆</span>}<span style={{fontSize:9,color:G.textSec,marginLeft:"auto"}}>{validCount} válidos · {count} ejec.</span></div>
-                      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{Array.from({length:boxes}).map((_,i)=>{const t=sorted[i],r=t?getResult(t):null,counts=t&&t.validez>=3;return(<div key={i} title={t?`${t.date} · ${t.pair} · ${r||"BE"}`:""} style={{width:24,height:24,borderRadius:"50%",background:r?resBg(r):G.surfaceAlt,border:`2px solid ${r?resC(r):G.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:r?resC(r):G.textMuted,fontWeight:700,flexShrink:0,boxShadow:counts&&r?`0 0 5px ${resC(r)}44`:"none",opacity:t&&!counts?0.4:1}}>{r==="Win"?"W":r==="Loss"?"L":r==="BE"?"B":""}</div>);})}</div>
-                    </div>
-                  );
-                })}
+
+            {/* ── SECCIÓN 4: Todos los Trades ── */}
+            <div style={{ marginBottom:8 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
+                <div style={{ width:3, height:18, background:G.textSec, borderRadius:2 }}/>
+                <span style={{ fontSize:13, fontWeight:700, fontFamily:G.fontDisplay, letterSpacing:"-0.01em" }}>Todos los Trades</span>
+                <div style={{ flex:1, height:1, background:G.border, marginLeft:4 }}/>
               </div>
             </div>
-            {/* All Trades */}
             <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
               <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
-                <div style={{ fontSize:9, color:G.textSec, letterSpacing:"0.14em", textTransform:"uppercase", fontFamily:G.fontDisplay }}>{`Todos los Trades — ${analTf==="quarterly"?"Trimestre":analTf==="annual"?"Anual":"All‑Time"}`}</div>
+                <div style={{ fontSize:9, color:G.textSec, letterSpacing:"0.14em", textTransform:"uppercase", fontFamily:G.fontDisplay }}>{`${analTf==="quarterly"?"Trimestre":analTf==="annual"?"Anual":"All‑Time"}`}</div>
                 <div style={{ textAlign:"right" }}>
-                  {(()=>{const exec=analTrades.filter(t=>t.ejecutado);const pnl=exec.reduce((s,t)=>s+t.pnl,0);const r=exec.reduce((s,t)=>s+t.rr,0);return(<><div style={{fontSize:14,fontWeight:800,fontFamily:G.fontUI,color:pColor(pnl),lineHeight:1,letterSpacing:"-0.03em"}}>{fmtD(pnl)}</div><div style={{fontSize:11,fontWeight:600,fontFamily:G.fontUI,color:pColor(r),letterSpacing:"-0.02em",marginTop:2}}>{fmtR(r)}</div></>);})()} 
+                  {(()=>{const ex=analTrades.filter(t=>t.ejecutado);const pnl=ex.reduce((s,t)=>s+t.pnl,0);const r=ex.reduce((s,t)=>s+t.rr,0);return(<><div style={{fontSize:14,fontWeight:800,fontFamily:G.fontUI,color:pColor(pnl),lineHeight:1,letterSpacing:"-0.03em"}}>{fmtD(pnl)}</div><div style={{fontSize:11,fontWeight:600,fontFamily:G.fontUI,color:pColor(r),letterSpacing:"-0.02em",marginTop:2}}>{fmtR(r)}</div></>);})()} 
                 </div>
               </div>
               {tradesByMonth.map(({label,trades:mt})=>(<div key={label} style={{marginBottom:24}}><div style={{fontSize:11,fontWeight:600,fontFamily:G.fontDisplay,color:G.textSec,marginBottom:8,paddingBottom:6,borderBottom:`1px solid ${G.border}`}}>{label} <span style={{fontWeight:400,fontSize:10}}>({mt.length})</span></div><TradeTable trades={mt} showDelete={false}/></div>))}
               {!tradesByMonth.length&&<div style={{color:G.textMuted,fontSize:12,textAlign:"center",padding:"28px 0"}}>Sin trades en este período</div>}
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* ══════════ REPORTES ═════════════════════════════════════════════ */}
         {tab === "reportes" && <ReportesTab trades={trades}/>}
