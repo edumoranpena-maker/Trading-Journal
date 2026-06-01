@@ -462,10 +462,10 @@ function buildPeriodOptions(tf, trades) {
   return [{id:"alltime",label:"All‑Time"}];
 }
 
-function wrScore(wins,losses,sumR){const wl=wins+losses;if(wl===0)return -Infinity;const wr=(wins/wl)*100;return wr+(sumR/(Math.max(wl,1)*10));}
+function wrScore(wins,losses,sumR){const wl=wins+losses;if(wl===0)return -Infinity;return(wins/wl)*100;}
 function statsByDayOfWeek(trades){
   const m={};trades.filter(t=>t.ejecutado).forEach(t=>{const dow=parseLocalDate(t.date).getDay();if(!m[dow])m[dow]={label:DIAS_ES[dow],wins:0,losses:0,sumR:0};const r=getResult(t);if(r==="Win")m[dow].wins++;else if(r==="Loss")m[dow].losses++;m[dow].sumR+=t.rr;});
-  return Object.values(m).map(v=>{const wl=v.wins+v.losses;return{label:v.label,count:v.wins+v.losses,wr:wl?((v.wins/wl)*100).toFixed(0):0,score:wrScore(v.wins,v.losses,v.sumR)};}).sort((a,b)=>b.score-a.score);
+  return Object.values(m).map(v=>{const wl=v.wins+v.losses;return{label:v.label,count:v.wins+v.losses,wr:wl?((v.wins/wl)*100).toFixed(0):0,score:wrScore(v.wins,v.losses,v.sumR),sumR:v.sumR};}).sort((a,b)=>b.score!==a.score?b.score-a.score:b.sumR-a.sumR);
 }
 function statsByWeekOfMonth(trades){
   // Assign each trade date to a "week slot" 1-4 within its month.
@@ -576,12 +576,12 @@ function statsByWeekOfMonth(trades){
 
   return Object.values(merged).map(v => {
     const wl = v.wins + v.losses;
-    return { label:v.label, count:wl, wr: wl ? ((v.wins/wl)*100).toFixed(0) : 0, score: wrScore(v.wins, v.losses, v.sumR) };
-  }).sort((a, b) => b.score - a.score);
+    return { label:v.label, count:wl, wr: wl ? ((v.wins/wl)*100).toFixed(0) : 0, score: wrScore(v.wins, v.losses, v.sumR), sumR:v.sumR };
+  }).sort((a, b) => b.score!==a.score ? b.score-a.score : b.sumR-a.sumR);
 }
 function statsByMonth(trades){
   const m={};trades.filter(t=>t.ejecutado).forEach(t=>{const mon=parseLocalDate(t.date).getMonth();const k=MESES_ES[mon];if(!m[k])m[k]={label:k,wins:0,losses:0,sumR:0};const r=getResult(t);if(r==="Win")m[k].wins++;else if(r==="Loss")m[k].losses++;m[k].sumR+=t.rr;});
-  return Object.values(m).map(v=>{const wl=v.wins+v.losses;return{label:v.label,count:wl,wr:wl?((v.wins/wl)*100).toFixed(0):0,score:wrScore(v.wins,v.losses,v.sumR)};}).sort((a,b)=>b.score-a.score);
+  return Object.values(m).map(v=>{const wl=v.wins+v.losses;return{label:v.label,count:wl,wr:wl?((v.wins/wl)*100).toFixed(0):0,score:wrScore(v.wins,v.losses,v.sumR),sumR:v.sumR};}).sort((a,b)=>b.score!==a.score?b.score-a.score:b.sumR-a.sumR);
 }
 
 function getMentalPolarity(val) {
@@ -1984,6 +1984,7 @@ export default function App() {
   const [editTrade,  setEditTrade] = useState(null);
   const [opError,    setOpError]   = useState(null);  // errores de CRUD
   const [mobNavOpen, setMobNavOpen] = useState(false);
+  const [tradesNavDate, setTradesNavDate] = useState(() => { const n=new Date(); return {y:n.getFullYear(),m:n.getMonth()}; });
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Close mobile nav when clicking outside
@@ -2281,12 +2282,15 @@ export default function App() {
         {tab === "trades" && (
           <div className="fade-up">
             {(()=>{
+              const { y: curY, m: curM } = tradesNavDate;
               const now = new Date();
-              const curY = now.getFullYear(), curM = now.getMonth();
+              const isCurrentMonth = curY === now.getFullYear() && curM === now.getMonth();
+              const goToPrev = () => setTradesNavDate(({y,m}) => m===0 ? {y:y-1,m:11} : {y,m:m-1});
+              const goToNext = () => setTradesNavDate(({y,m}) => m===11 ? {y:y+1,m:0} : {y,m:m+1});
               const thisMonthTrades = [...trades]
                 .filter(t => { const d = parseLocalDate(t.date); return d.getFullYear()===curY && d.getMonth()===curM; })
                 .sort((a,b) => parseLocalDate(b.date)-parseLocalDate(a.date));
-              const archivedCount = trades.length - thisMonthTrades.length;
+              const archivedCount = trades.filter(t => { const d=parseLocalDate(t.date); return !(d.getFullYear()===curY && d.getMonth()===curM); }).length;
               const monthLabel = `${MESES_ES[curM]} ${curY}`;
               return (<>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:18 }}>
@@ -2314,23 +2318,26 @@ export default function App() {
             {editTrade&&<TradeForm initial={editTrade} onSave={updateTrade} onCancel={()=>setEditTrade(null)}/>}
             <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
               <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
-                <div style={{ fontSize:9, color:G.textSec, letterSpacing:"0.14em", textTransform:"uppercase", fontFamily:G.fontDisplay }}>
-                  {monthLabel}
+                {/* Month navigator */}
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <button onClick={goToPrev} style={{ background:G.surfaceAlt, border:`1px solid ${G.border}`, color:G.textSec, borderRadius:6, width:26, height:26, cursor:"pointer", fontSize:13, display:"flex", alignItems:"center", justifyContent:"center" }}>‹</button>
+                  <span style={{ fontSize:11, fontWeight:600, fontFamily:G.fontDisplay, color:G.textPrimary, minWidth:90, textAlign:"center" }}>{monthLabel}</span>
+                  <button onClick={goToNext} disabled={isCurrentMonth} style={{ background:G.surfaceAlt, border:`1px solid ${G.border}`, color:isCurrentMonth?G.textMuted:G.textSec, borderRadius:6, width:26, height:26, cursor:isCurrentMonth?"default":"pointer", fontSize:13, display:"flex", alignItems:"center", justifyContent:"center", opacity:isCurrentMonth?0.35:1 }}>›</button>
                 </div>
                 {archivedCount > 0 && (
-                  <button onClick={() => setTab("analisis")}
+                  <button onClick={() => { setAnalTf("alltime"); setTab("analisis"); }}
                     style={{ background:`${G.blue}18`, border:`1px solid ${G.blue}44`, color:G.blue, borderRadius:6, padding:"4px 11px", cursor:"pointer", fontSize:9, fontFamily:G.fontMono, display:"flex", alignItems:"center", gap:5 }}>
-                    📦 {archivedCount} {T("trades archivados")} — {T("ver en More Stats →")}
+                    Meses anteriores →
                   </button>
                 )}
               </div>
               <TradeTable trades={thisMonthTrades} onDelete={deleteTrade} onEdit={t=>{setEditTrade(t);setAddOpen(false);window.scrollTo({top:0,behavior:'smooth'});}} showDelete={true}/>
-              {!thisMonthTrades.length && archivedCount > 0 && (
+              {!thisMonthTrades.length && (
                 <div style={{ textAlign:"center", padding:"28px 0", color:G.textMuted, fontSize:12 }}>
                   {T("Sin trades en")} {monthLabel}.{" "}
-                  <button onClick={() => setTab("analisis")} style={{ background:"none", border:"none", color:G.blue, cursor:"pointer", fontSize:12, textDecoration:"underline" }}>
+                  {archivedCount > 0 && <button onClick={() => { setAnalTf("alltime"); setTab("analisis"); }} style={{ background:"none", border:"none", color:G.blue, cursor:"pointer", fontSize:12, textDecoration:"underline" }}>
                     {T("Ver meses anteriores en More Stats")}
-                  </button>
+                  </button>}
                 </div>
               )}
             </div>
