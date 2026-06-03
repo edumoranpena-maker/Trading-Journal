@@ -93,9 +93,9 @@ const TRANSLATIONS = {
   "Dom":{ en:"Sun",es:"Dom" }, "Lun":{ en:"Mon",es:"Lun" }, "Mar":{ en:"Tue",es:"Mar" },
   "Mié":{ en:"Wed",es:"Mié" }, "Jue":{ en:"Thu",es:"Jue" }, "Vie":{ en:"Fri",es:"Vie" }, "Sáb":{ en:"Sat",es:"Sáb" },
   // TradeTable headers
-  "Fecha":    { en:"Date",     es:"Fecha"   },
-  "Hora":     { en:"Time",     es:"Hora"    },
-  "Activo":   { en:"Asset",    es:"Activo"  },
+
+
+
   "Cap":      { en:"Cap",      es:"Cap"     },
   "Ejec":     { en:"Exec",     es:"Ejec"    },
   "Valid":    { en:"Valid",    es:"Valid"   },
@@ -349,8 +349,6 @@ import { useTrades } from "./hooks/useTrades";
 // ─── Design tokens (dark default — overridden reactively in App) ──────────────
 let G = makeTokens("dark");
 
-
-
 const pColor = v => v > 0 ? G.accent : v < 0 ? G.red : G.textSec;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -375,8 +373,6 @@ const mkReportTfOpts = T => [{id:"monthly",label:T("Mensual")},{id:"quarterly",l
 const TF_OPTS      = [{id:"weekly",label:"Semana"},{id:"monthly",label:"Mes"},{id:"quarterly",label:"Trimestre"},{id:"annual",label:"Año"},{id:"alltime",label:"All‑Time"}];
 const ANAL_TF_OPTS = [{id:"quarterly",label:"Trimestre"},{id:"annual",label:"Año"},{id:"alltime",label:"All‑Time"}];
 const REPORT_TF_OPTS = [{id:"monthly",label:"Mensual"},{id:"quarterly",label:"Trimestral"},{id:"annual",label:"Anual"}];
-
-
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 function detectMercado(pair) {
   const p = (pair||"").toUpperCase();
@@ -1684,8 +1680,6 @@ function EconomicCalendar() {
     </div>
   );
 }
-
-
 // ─────────────────────────────────────────────────────────────────────────────
 // ─── REPORTES TAB ────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2150,8 +2144,6 @@ function ReportesTab({ trades }) {
     </div>
   );
 }
-
-
 // Opciones estables fuera del componente — un objeto inline dentro del
 // componente sería nuevo en cada render y podría causar re-ejecuciones.
 const TRADES_OPTIONS = USE_SUPABASE
