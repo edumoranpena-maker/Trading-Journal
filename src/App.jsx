@@ -462,7 +462,8 @@ function buildPeriodOptions(tf, trades) {
   return [{id:"alltime",label:"All‑Time"}];
 }
 
-function wrScore(wins,losses,sumR){const wl=wins+losses;if(wl===0)return -Infinity;return(wins/wl)*100;}
+function wrScore(wins,losses,sumR){const wl=wins+losses;if(wl===0)return 50+(sumR*0.01); // solo BEs: score neutro 50%, no -Infinity
+  return(wins/wl)*100;}
 function statsByDayOfWeek(trades){
   const m={};trades.filter(t=>t.ejecutado).forEach(t=>{const dow=parseLocalDate(t.date).getDay();if(!m[dow])m[dow]={label:DIAS_ES[dow],wins:0,losses:0,sumR:0};const r=getResult(t);if(r==="Win")m[dow].wins++;else if(r==="Loss")m[dow].losses++;m[dow].sumR+=t.rr;});
   return Object.values(m).map(v=>{const wl=v.wins+v.losses;return{label:v.label,count:v.wins+v.losses,wr:wl?((v.wins/wl)*100).toFixed(0):0,score:wrScore(v.wins,v.losses,v.sumR),sumR:v.sumR};}).sort((a,b)=>b.score!==a.score?b.score-a.score:b.sumR-a.sumR);
@@ -833,11 +834,18 @@ function ExecSequence({ trades, year, month }) {
   );
 }
 
-function TradingCalendar({ trades }) {
+function TradingCalendar({ trades, viewYear: extYear, viewMonth: extMonth, onMonthChange }) {
   const [nowNY, setNowNY] = useState(()=>{const d=new Date(new Date().toLocaleString("en-US",{timeZone:"America/New_York"}));return{y:d.getFullYear(),m:d.getMonth(),d:d.getDate()};});
   useEffect(()=>{const tick=()=>{const d=new Date(new Date().toLocaleString("en-US",{timeZone:"America/New_York"}));setNowNY({y:d.getFullYear(),m:d.getMonth(),d:d.getDate()});};const id=setInterval(tick,60_000);return()=>clearInterval(id);},[]);
-  const [viewYear,setViewYear]=useState(nowNY.y);
-  const [viewMonth,setViewMonth]=useState(nowNY.m);
+  const [intYear,setIntYear]=useState(nowNY.y);
+  const [intMonth,setIntMonth]=useState(nowNY.m);
+  const controlled = extYear!==undefined && extMonth!==undefined;
+  const viewYear  = controlled ? extYear  : intYear;
+  const viewMonth = controlled ? extMonth : intMonth;
+  const setViewYear  = v => { if(controlled) onMonthChange?.(typeof v==="function"?v(viewYear):v, viewMonth); else setIntYear(v); };
+  const setViewMonth = v => { if(controlled) onMonthChange?.(viewYear, typeof v==="function"?v(viewMonth):v); else setIntMonth(v); };
+  const goCalPrev = ()=>{ if(viewMonth===0) onMonthChange?.(viewYear-1,11)||(!controlled&&(setIntYear(y=>y-1),setIntMonth(11))); else onMonthChange?.(viewYear,viewMonth-1)||(!controlled&&setIntMonth(m=>m-1)); };
+  const goCalNext = ()=>{ if(viewMonth===11) onMonthChange?.(viewYear+1,0)||(!controlled&&(setIntYear(y=>y+1),setIntMonth(0))); else onMonthChange?.(viewYear,viewMonth+1)||(!controlled&&setIntMonth(m=>m+1)); };
   const dayMap=useMemo(()=>{const m={};trades.filter(t=>t.ejecutado).forEach(t=>{const[yrS,moS,dyS]=t.date.split("-");const yr2=parseInt(yrS),mo2=parseInt(moS)-1,dy2=parseInt(dyS);if(yr2===viewYear&&mo2===viewMonth){if(!m[dy2])m[dy2]={pnl:0,count:0};m[dy2].pnl+=t.pnl;m[dy2].count++;}});return m;},[trades,viewYear,viewMonth]);
   const firstDow=new Date(viewYear,viewMonth,1).getDay();
   const daysInMonth=new Date(viewYear,viewMonth+1,0).getDate();
@@ -846,9 +854,9 @@ function TradingCalendar({ trades }) {
     <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
         <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-          <button onClick={()=>{if(viewMonth===0){setViewYear(y=>y-1);setViewMonth(11);}else setViewMonth(m=>m-1);}} style={{ background:"none", border:`1px solid ${G.border}`, color:G.textSec, borderRadius:6, width:28, height:28, cursor:"pointer", fontSize:13 }}>‹</button>
+          <button onClick={goCalPrev} style={{ background:"none", border:`1px solid ${G.border}`, color:G.textSec, borderRadius:6, width:28, height:28, cursor:"pointer", fontSize:13 }}>‹</button>
           <span style={{ fontSize:13, fontWeight:600, fontFamily:G.fontDisplay }}>{MESES_ES[viewMonth]} {viewYear}</span>
-          <button onClick={()=>{if(viewMonth===11){setViewYear(y=>y+1);setViewMonth(0);}else setViewMonth(m=>m+1);}} style={{ background:"none", border:`1px solid ${G.border}`, color:G.textSec, borderRadius:6, width:28, height:28, cursor:"pointer", fontSize:13 }}>›</button>
+          <button onClick={goCalNext} style={{ background:"none", border:`1px solid ${G.border}`, color:G.textSec, borderRadius:6, width:28, height:28, cursor:"pointer", fontSize:13 }}>›</button>
         </div>
         <div style={{ textAlign:"right" }}><span style={{ fontSize:11, color:G.textSec }}>Total: </span><span style={{ fontSize:13, fontWeight:700, color:pColor(totalPnl), fontFamily:G.fontDisplay }}>{fmtD(totalPnl)}</span></div>
       </div>
@@ -862,7 +870,215 @@ function TradingCalendar({ trades }) {
   );
 }
 
-function GroupBars({ data, barColor }) {
+function OverviewSection({ trades, analTf, analPeriod }) {
+  const [chartType, setChartType] = useState("bar"); // "bar" | "donut"
+  const [unit, setUnit] = useState("R"); // "R" | "USD"
+
+  // Build period buckets depending on tf
+  const buckets = useMemo(() => {
+    const exec = trades.filter(t => t.ejecutado);
+    if (analTf === "quarterly" && analPeriod) {
+      const [yr, qStr] = analPeriod.split("-Q");
+      const year = parseInt(yr), q = parseInt(qStr);
+      const startMonth = (q - 1) * 3;
+      return [0,1,2].map(i => {
+        const mo = startMonth + i;
+        const ts = exec.filter(t => { const d=parseLocalDate(t.date); return d.getFullYear()===year && d.getMonth()===mo; });
+        return { label: MESES_ES[mo].slice(0,3), r: ts.reduce((s,t)=>s+t.rr,0), pnl: ts.reduce((s,t)=>s+t.pnl,0), count: ts.length };
+      });
+    }
+    if (analTf === "annual" && analPeriod) {
+      const year = parseInt(analPeriod);
+      return MESES_ES.map((name, mo) => {
+        const ts = exec.filter(t => { const d=parseLocalDate(t.date); return d.getFullYear()===year && d.getMonth()===mo; });
+        return { label: name.slice(0,3), r: ts.reduce((s,t)=>s+t.rr,0), pnl: ts.reduce((s,t)=>s+t.pnl,0), count: ts.length };
+      });
+    }
+    // alltime — one bucket per year
+    const yearMap = {};
+    exec.forEach(t => { const y=parseLocalDate(t.date).getFullYear(); if(!yearMap[y]) yearMap[y]={label:`${y}`,r:0,pnl:0,count:0}; yearMap[y].r+=t.rr; yearMap[y].pnl+=t.pnl; yearMap[y].count++; });
+    return Object.values(yearMap).sort((a,b)=>parseInt(a.label)-parseInt(b.label));
+  }, [trades, analTf, analPeriod]);
+
+  const vals = buckets.map(b => unit==="R" ? b.r : b.pnl);
+  const total = vals.reduce((s,v)=>s+v,0);
+  const best  = buckets.reduce((a,b,i)=>vals[i]>vals[a]?i:a, 0);
+  const worst = buckets.reduce((a,b,i)=>vals[i]<vals[a]?i:a, 0);
+
+  const fmt = v => unit==="R" ? `${v>=0?"+":""}${v.toFixed(2)}R` : fmtD(v);
+  const PALETTE = [G.accent, G.blue, "#a78bfa", G.yellow, "#f97316", "#ec4899", "#06b6d4", "#84cc16", "#f43f5e", "#8b5cf6", "#14b8a6", "#eab308"];
+
+  // ── Bar Chart ──────────────────────────────────────────────────────────────
+  const BarChart = () => {
+    const max = Math.max(...vals.map(Math.abs), 0.01);
+    const hasNeg = vals.some(v => v < 0);
+    const baseH = 120;
+    return (
+      <div style={{ width:"100%", overflowX:"hidden" }}>
+        <div style={{ display:"flex", alignItems:"flex-end", gap: buckets.length > 8 ? 3 : 8, height: hasNeg ? baseH*2+24 : baseH+8, padding:"0 4px", position:"relative" }}>
+          {hasNeg && <div style={{ position:"absolute", left:0, right:0, top:"50%", height:1, background:G.border, zIndex:0 }}/>}
+          {buckets.map((b,i) => {
+            const v = vals[i];
+            const pct = Math.abs(v) / max;
+            const barH = Math.max(Math.round(pct * baseH), v!==0 ? 3 : 0);
+            const col = v > 0 ? G.accent : v < 0 ? G.red : G.textMuted;
+            const isB = i===best && v>0, isW = i===worst && v<0;
+            return (
+              <div key={b.label} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:0, position:"relative", zIndex:1, minWidth:0 }}>
+                {/* positive bar */}
+                <div style={{ flex:1, display:"flex", flexDirection:"column", justifyContent:"flex-end", width:"100%" }}>
+                  {v > 0 && (
+                    <div style={{ height:barH, background:`linear-gradient(180deg, ${col}cc 0%, ${col}55 100%)`, border:`1px solid ${col}88`, borderRadius:"3px 3px 0 0", boxShadow: isB ? `0 0 10px ${col}55` : "none", transition:"height 0.4s cubic-bezier(.4,0,.2,1)", position:"relative" }}>
+                      {isB && <div style={{ position:"absolute", top:-14, left:"50%", transform:"translateX(-50%)", fontSize:8, color:col, whiteSpace:"nowrap", fontFamily:G.fontMono }}>▲</div>}
+                    </div>
+                  )}
+                </div>
+                {/* zero line */}
+                {hasNeg && <div style={{ height:1, background:G.border, width:"100%" }}/>}
+                {/* negative bar */}
+                {hasNeg && <div style={{ flex:1, display:"flex", flexDirection:"column", justifyContent:"flex-start", width:"100%" }}>
+                  {v < 0 && (
+                    <div style={{ height:barH, background:`linear-gradient(180deg, ${col}55 0%, ${col}cc 100%)`, border:`1px solid ${col}88`, borderRadius:"0 0 3px 3px", boxShadow: isW ? `0 0 10px ${col}55` : "none", transition:"height 0.4s cubic-bezier(.4,0,.2,1)" }}/>
+                  )}
+                </div>}
+                <div style={{ fontSize: buckets.length > 8 ? 7 : 9, color: G.textSec, marginTop:4, textAlign:"center", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:"100%", fontFamily:G.fontDisplay }}>{b.label}</div>
+              </div>
+            );
+          })}
+        </div>
+        {/* value labels below — only if not too many buckets */}
+        {buckets.length <= 6 && (
+          <div style={{ display:"flex", gap:8, marginTop:4, padding:"0 4px" }}>
+            {buckets.map((b,i) => (
+              <div key={b.label} style={{ flex:1, textAlign:"center", fontSize:9, color:pColor(vals[i]), fontFamily:G.fontMono, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                {vals[i]!==0 ? fmt(vals[i]) : "—"}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── Donut Chart ────────────────────────────────────────────────────────────
+  const DonutChart = () => {
+    const size = 180, stroke = 28, r = (size - stroke) / 2, cx = size/2, cy = size/2, circ = 2 * Math.PI * r;
+    const absVals = vals.map(Math.abs);
+    const absTotal = absVals.reduce((s,v)=>s+v, 0);
+    let offset = 0;
+    const segments = absTotal === 0 ? [] : buckets.map((b,i) => {
+      const frac = absVals[i] / absTotal;
+      const dash = frac * circ;
+      const seg = { frac, dash, offset, color: vals[i] >= 0 ? PALETTE[i % PALETTE.length] : G.red, label: b.label, val: vals[i], i };
+      offset += dash;
+      return seg;
+    }).filter(s => s.frac > 0);
+
+    const showLegend = buckets.length > 3;
+    return (
+      <div style={{ display:"flex", flexDirection: showLegend ? "row" : "column", alignItems:"center", gap: showLegend ? 24 : 12, flexWrap:"wrap", justifyContent:"center", width:"100%" }}>
+        <div style={{ position:"relative", flexShrink:0 }}>
+          <svg width={size} height={size} style={{ transform:"rotate(-90deg)" }}>
+            {/* track */}
+            <circle cx={cx} cy={cy} r={r} fill="none" stroke={G.border} strokeWidth={stroke}/>
+            {segments.length === 0 && <circle cx={cx} cy={cy} r={r} fill="none" stroke={G.textMuted} strokeWidth={stroke} strokeDasharray={`${circ} ${circ}`} strokeDashoffset={0}/>}
+            {segments.map((s,i) => (
+              <circle key={i} cx={cx} cy={cy} r={r} fill="none"
+                stroke={s.color} strokeWidth={stroke}
+                strokeDasharray={`${s.dash - 1.5} ${circ - (s.dash - 1.5)}`}
+                strokeDashoffset={-s.offset}
+                style={{ transition:"stroke-dasharray 0.5s cubic-bezier(.4,0,.2,1), stroke-dashoffset 0.5s cubic-bezier(.4,0,.2,1)" }}
+              />
+            ))}
+          </svg>
+          {/* center label */}
+          <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", pointerEvents:"none" }}>
+            <div style={{ fontSize:11, color:G.textSec, fontFamily:G.fontDisplay, letterSpacing:"0.06em", textTransform:"uppercase", marginBottom:2 }}>Total</div>
+            <div style={{ fontSize:16, fontWeight:800, color:pColor(total), fontFamily:G.fontUI, letterSpacing:"-0.03em", lineHeight:1 }}>{fmt(total)}</div>
+          </div>
+        </div>
+        {/* Legend */}
+        {showLegend && (
+          <div style={{ display:"flex", flexDirection:"column", gap:5, minWidth:120, maxWidth:180 }}>
+            {segments.map((s,i) => (
+              <div key={i} style={{ display:"flex", alignItems:"center", gap:7 }}>
+                <div style={{ width:8, height:8, borderRadius:2, background:s.color, flexShrink:0 }}/>
+                <span style={{ fontSize:10, color:G.textSec, fontFamily:G.fontDisplay, flex:1 }}>{s.label}</span>
+                <span style={{ fontSize:10, color:pColor(s.val), fontFamily:G.fontMono, whiteSpace:"nowrap" }}>{fmt(s.val)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* inline values for small donuts */}
+        {!showLegend && (
+          <div style={{ display:"flex", gap:16, flexWrap:"wrap", justifyContent:"center" }}>
+            {buckets.map((b,i) => (
+              <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
+                <div style={{ width:8, height:8, borderRadius:2, background:PALETTE[i%PALETTE.length] }}/>
+                <span style={{ fontSize:10, color:G.textSec, fontFamily:G.fontDisplay }}>{b.label}</span>
+                <span style={{ fontSize:10, color:pColor(vals[i]), fontFamily:G.fontMono }}>{fmt(vals[i])}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const noData = buckets.every(b => b.count === 0);
+
+  return (
+    <div style={{ marginBottom:32 }}>
+      {/* Section header */}
+      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:20 }}>
+        <div style={{ width:3, height:18, background:`linear-gradient(180deg,${G.accent},${G.blue})`, borderRadius:2 }}/>
+        <span style={{ fontSize:13, fontWeight:700, fontFamily:G.fontDisplay, letterSpacing:"-0.01em" }}>Overview</span>
+        <div style={{ flex:1, height:1, background:G.border, marginLeft:4 }}/>
+      </div>
+
+      <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:12, padding:20 }}>
+        {/* Controls row */}
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20, flexWrap:"wrap", gap:10 }}>
+          {/* Chart type toggle */}
+          <div style={{ display:"flex", background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:8, padding:3, gap:3 }}>
+            {[{v:"bar",label:"▮ Bar"},{v:"donut",label:"◉ Donut"}].map(o=>(
+              <button key={o.v} onClick={()=>setChartType(o.v)} style={{ padding:"5px 14px", borderRadius:6, border:"none", cursor:"pointer", fontSize:10, fontFamily:G.fontDisplay, fontWeight:600, letterSpacing:"0.04em", transition:"all 0.15s", background:chartType===o.v?G.surfaceHov:"transparent", color:chartType===o.v?G.textPrimary:G.textSec, boxShadow:chartType===o.v?`0 0 0 1px ${G.borderHov}`:"none" }}>{o.label}</button>
+            ))}
+          </div>
+          {/* Unit toggle */}
+          <div style={{ display:"flex", background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:8, padding:3, gap:3 }}>
+            {["R","USD"].map(u=>(
+              <button key={u} onClick={()=>setUnit(u)} style={{ padding:"5px 16px", borderRadius:6, border:"none", cursor:"pointer", fontSize:10, fontFamily:G.fontMono, fontWeight:600, transition:"all 0.15s", background:unit===u?G.accent:"transparent", color:unit===u?G.bg:G.textSec }}>{u}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Summary cards */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:20 }}>
+          {[
+            { label:"Total", val:total, sub: `${buckets.filter((_,i)=>vals[i]!==0).length} períodos` },
+            { label:"Best Period", val:vals[best]??0, sub: buckets[best]?.label??"-" },
+            { label:"Worst Period", val:vals[worst]??0, sub: buckets[worst]?.label??"-" },
+          ].map(card=>(
+            <div key={card.label} style={{ background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:9, padding:"12px 14px" }}>
+              <div style={{ fontSize:8, color:G.textSec, fontFamily:G.fontDisplay, letterSpacing:"0.14em", textTransform:"uppercase", marginBottom:6 }}>{card.label}</div>
+              <div style={{ fontSize:18, fontWeight:800, color:pColor(card.val), fontFamily:G.fontUI, letterSpacing:"-0.03em", lineHeight:1, marginBottom:3 }}>{fmt(card.val)}</div>
+              <div style={{ fontSize:10, color:G.textMuted, fontFamily:G.fontDisplay }}>{card.sub}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Chart */}
+        <div style={{ minHeight:180, display:"flex", alignItems:"center", justifyContent:"center", transition:"opacity 0.25s" }}>
+          {noData
+            ? <div style={{ color:G.textMuted, fontSize:12, textAlign:"center", padding:"32px 0" }}>Sin trades en este período</div>
+            : chartType==="bar" ? <BarChart/> : <DonutChart/>
+          }
+        </div>
+      </div>
+    </div>
+  );
+}
   const col = barColor || G.accent;
   if (!data.length) return <div style={{ color:G.textMuted, fontSize:11, textAlign:"center", padding:16 }}>Sin datos</div>;
   return (
@@ -2342,7 +2558,7 @@ export default function App() {
               )}
             </div>
             {/* Trading Calendar — debajo de la tabla */}
-            <TradingCalendar trades={trades}/>
+            <TradingCalendar trades={trades} viewYear={tradesNavDate.y} viewMonth={tradesNavDate.m} onMonthChange={(y,m)=>setTradesNavDate({y,m})}/>
               </>);
             })()}
           </div>
@@ -2399,6 +2615,9 @@ export default function App() {
               <TFSelector value={analTf} onChange={v=>{setAnalTf(v);}} options={mkAnalTfOpts(T)}/>
             </div>
             <div style={{ marginBottom:24 }}><PeriodSelector tf={analTf} periodId={analPeriod} onChange={setAnalPeriod} trades={trades}/></div>
+
+            {/* ── OVERVIEW ── */}
+            <OverviewSection trades={analTrades} analTf={analTf} analPeriod={analPeriod}/>
 
             {/* ── SECCIÓN 1: Desempeño del Sistema ── */}
             <div style={{ marginBottom:8 }}>
