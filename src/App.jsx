@@ -867,152 +867,204 @@ function TradingCalendar({ trades, viewYear: extYear, viewMonth: extMonth, onMon
 }
 
 function OverviewSection({ trades, analTf, analPeriod }) {
-  const [chartType, setChartType] = useState("bar"); // "bar" | "donut"
-  const [unit, setUnit] = useState("R"); // "R" | "USD"
+  const [chartType, setChartType] = useState("bar");
+  const [unit, setUnit] = useState("R");
 
-  // Build period buckets depending on tf
   const buckets = useMemo(() => {
     const exec = trades.filter(t => t.ejecutado);
-    if (analTf === "quarterly" && analPeriod) {
-      const [yr, qStr] = analPeriod.split("-Q");
-      const year = parseInt(yr), q = parseInt(qStr);
+    // QUARTERLY
+    if (analTf === "quarterly") {
+      if (!analPeriod || !analPeriod.includes("-Q")) return [];
+      const parts = analPeriod.split("-Q");
+      if (parts.length < 2) return [];
+      const year = parseInt(parts[0]), q = parseInt(parts[1]);
+      if (isNaN(year) || isNaN(q)) return [];
       const startMonth = (q - 1) * 3;
       return [0,1,2].map(i => {
         const mo = startMonth + i;
-        const ts = exec.filter(t => { const d=parseLocalDate(t.date); return d.getFullYear()===year && d.getMonth()===mo; });
-        return { label: MESES_ES[mo].slice(0,3), r: ts.reduce((s,t)=>s+t.rr,0), pnl: ts.reduce((s,t)=>s+t.pnl,0), count: ts.length };
+        const ts = exec.filter(t => { try { const d=parseLocalDate(t.date); return d.getFullYear()===year && d.getMonth()===mo; } catch(e){ return false; } });
+        return { label: (MESES_ES[mo]||"?").slice(0,3), r: ts.reduce((s,t)=>s+t.rr,0), pnl: ts.reduce((s,t)=>s+t.pnl,0), count: ts.length };
       });
     }
-    if (analTf === "annual" && analPeriod) {
+    // ANNUAL
+    if (analTf === "annual") {
+      if (!analPeriod) return [];
       const year = parseInt(analPeriod);
+      if (isNaN(year)) return [];
       return MESES_ES.map((name, mo) => {
-        const ts = exec.filter(t => { const d=parseLocalDate(t.date); return d.getFullYear()===year && d.getMonth()===mo; });
+        const ts = exec.filter(t => { try { const d=parseLocalDate(t.date); return d.getFullYear()===year && d.getMonth()===mo; } catch(e){ return false; } });
         return { label: name.slice(0,3), r: ts.reduce((s,t)=>s+t.rr,0), pnl: ts.reduce((s,t)=>s+t.pnl,0), count: ts.length };
       });
     }
-    // alltime — one bucket per year
+    // ALL-TIME
     const yearMap = {};
-    exec.forEach(t => { const y=parseLocalDate(t.date).getFullYear(); if(!yearMap[y]) yearMap[y]={label:`${y}`,r:0,pnl:0,count:0}; yearMap[y].r+=t.rr; yearMap[y].pnl+=t.pnl; yearMap[y].count++; });
+    exec.forEach(t => { try { const y=parseLocalDate(t.date).getFullYear(); if(!yearMap[y]) yearMap[y]={label:`${y}`,r:0,pnl:0,count:0}; yearMap[y].r+=t.rr; yearMap[y].pnl+=t.pnl; yearMap[y].count++; } catch(e){} });
     return Object.values(yearMap).sort((a,b)=>parseInt(a.label)-parseInt(b.label));
   }, [trades, analTf, analPeriod]);
 
-  const vals = buckets.map(b => unit==="R" ? b.r : b.pnl);
-  const total = vals.reduce((s,v)=>s+v,0);
-  const best  = buckets.reduce((a,b,i)=>vals[i]>vals[a]?i:a, 0);
-  const worst = buckets.reduce((a,b,i)=>vals[i]<vals[a]?i:a, 0);
+  const vals  = buckets.map(b => unit==="R" ? b.r : b.pnl);
+  const total = vals.reduce((s,v)=>s+v, 0);
+  const best  = vals.length ? vals.reduce((bi,v,i)=>v>vals[bi]?i:bi, 0) : 0;
+  const worst = vals.length ? vals.reduce((wi,v,i)=>v<vals[wi]?i:wi, 0) : 0;
+  const fmt   = v => unit==="R" ? `${v>=0?"+":""}${v.toFixed(2)}R` : fmtD(v);
+  const fmtShort = v => unit==="R" ? `${v>=0?"+":""}${Math.abs(v)<10?v.toFixed(1):Math.round(v)}R` : `${v>=0?"+":"-"}$${Math.abs(v)<1000?Math.abs(v).toFixed(0):(Math.abs(v)/1000).toFixed(1)+"k"}`;
+  const PALETTE = [G.accent,"#60a5fa","#a78bfa",G.yellow,"#f97316","#ec4899","#06b6d4","#84cc16","#f43f5e","#8b5cf6","#14b8a6","#eab308"];
 
-  const fmt = v => unit==="R" ? `${v>=0?"+":""}${v.toFixed(2)}R` : fmtD(v);
-  const PALETTE = [G.accent, G.blue, "#a78bfa", G.yellow, "#f97316", "#ec4899", "#06b6d4", "#84cc16", "#f43f5e", "#8b5cf6", "#14b8a6", "#eab308"];
-
-  // ── Bar Chart ──────────────────────────────────────────────────────────────
+  // ── Bar Chart with Y-axis, gridlines, value labels ──────────────────────
   const BarChart = () => {
-    const max = Math.max(...vals.map(Math.abs), 0.01);
-    const hasNeg = vals.some(v => v < 0);
-    const baseH = 120;
+    const CHART_H = 180; // height of the positive zone
+    const Y_W     = 42;  // width reserved for Y-axis labels
+    const maxAbs  = Math.max(...vals.map(Math.abs), 0.01);
+    const hasNeg  = vals.some(v => v < 0);
+    const hasPos  = vals.some(v => v > 0);
+
+    // Nice Y-axis ticks
+    const niceStep = (() => {
+      const raw = maxAbs / 4;
+      const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+      const steps = [1,2,2.5,5,10].map(s=>s*mag);
+      return steps.find(s=>s>=raw) || steps[steps.length-1];
+    })();
+    const topTick  = Math.ceil(maxAbs / niceStep) * niceStep;
+    const tickCount = Math.round(topTick / niceStep);
+    const ticks = Array.from({length: tickCount+1}, (_,i) => i * niceStep);
+
+    const toY = v => CHART_H - (v / topTick) * CHART_H; // px from top of positive zone
+    const toH = v => Math.abs((v / topTick) * CHART_H);
+
+    const gap = buckets.length > 8 ? 3 : buckets.length > 4 ? 6 : 10;
+
     return (
-      <div style={{ width:"100%", overflowX:"hidden" }}>
-        <div style={{ display:"flex", alignItems:"flex-end", gap: buckets.length > 8 ? 3 : 8, height: hasNeg ? baseH*2+24 : baseH+8, padding:"0 4px", position:"relative" }}>
-          {hasNeg && <div style={{ position:"absolute", left:0, right:0, top:"50%", height:1, background:G.border, zIndex:0 }}/>}
-          {buckets.map((b,i) => {
-            const v = vals[i];
-            const pct = Math.abs(v) / max;
-            const barH = Math.max(Math.round(pct * baseH), v!==0 ? 3 : 0);
-            const col = v > 0 ? G.accent : v < 0 ? G.red : G.textMuted;
-            const isB = i===best && v>0, isW = i===worst && v<0;
-            return (
-              <div key={b.label} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:0, position:"relative", zIndex:1, minWidth:0 }}>
-                {/* positive bar */}
-                <div style={{ flex:1, display:"flex", flexDirection:"column", justifyContent:"flex-end", width:"100%" }}>
-                  {v > 0 && (
-                    <div style={{ height:barH, background:`linear-gradient(180deg, ${col}cc 0%, ${col}55 100%)`, border:`1px solid ${col}88`, borderRadius:"3px 3px 0 0", boxShadow: isB ? `0 0 10px ${col}55` : "none", transition:"height 0.4s cubic-bezier(.4,0,.2,1)", position:"relative" }}>
-                      {isB && <div style={{ position:"absolute", top:-14, left:"50%", transform:"translateX(-50%)", fontSize:8, color:col, whiteSpace:"nowrap", fontFamily:G.fontMono }}>▲</div>}
-                    </div>
-                  )}
-                </div>
-                {/* zero line */}
-                {hasNeg && <div style={{ height:1, background:G.border, width:"100%" }}/>}
-                {/* negative bar */}
-                {hasNeg && <div style={{ flex:1, display:"flex", flexDirection:"column", justifyContent:"flex-start", width:"100%" }}>
-                  {v < 0 && (
-                    <div style={{ height:barH, background:`linear-gradient(180deg, ${col}55 0%, ${col}cc 100%)`, border:`1px solid ${col}88`, borderRadius:"0 0 3px 3px", boxShadow: isW ? `0 0 10px ${col}55` : "none", transition:"height 0.4s cubic-bezier(.4,0,.2,1)" }}/>
-                  )}
-                </div>}
-                <div style={{ fontSize: buckets.length > 8 ? 7 : 9, color: G.textSec, marginTop:4, textAlign:"center", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:"100%", fontFamily:G.fontDisplay }}>{b.label}</div>
+      <div style={{ width:"100%", overflowX:"hidden", userSelect:"none" }}>
+        <div style={{ display:"flex", width:"100%" }}>
+          {/* Y-axis */}
+          <div style={{ width:Y_W, flexShrink:0, position:"relative", height: hasNeg ? CHART_H*2+1 : CHART_H }}>
+            {/* Positive ticks */}
+            {ticks.map(t => (
+              <div key={`p${t}`} style={{ position:"absolute", right:6, top: toY(t)-1, fontSize:8, color:G.textMuted, fontFamily:G.fontMono, textAlign:"right", whiteSpace:"nowrap", lineHeight:1 }}>
+                {fmtShort(t)}
               </div>
-            );
-          })}
-        </div>
-        {/* value labels below — only if not too many buckets */}
-        {buckets.length <= 6 && (
-          <div style={{ display:"flex", gap:8, marginTop:4, padding:"0 4px" }}>
-            {buckets.map((b,i) => (
-              <div key={b.label} style={{ flex:1, textAlign:"center", fontSize:9, color:pColor(vals[i]), fontFamily:G.fontMono, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
-                {vals[i]!==0 ? fmt(vals[i]) : "—"}
+            ))}
+            {/* Negative ticks */}
+            {hasNeg && ticks.filter(t=>t>0).map(t => (
+              <div key={`n${t}`} style={{ position:"absolute", right:6, top: CHART_H+1+(t/topTick)*CHART_H-1, fontSize:8, color:G.textMuted, fontFamily:G.fontMono, textAlign:"right", whiteSpace:"nowrap", lineHeight:1 }}>
+                {fmtShort(-t)}
               </div>
             ))}
           </div>
-        )}
+
+          {/* Chart area */}
+          <div style={{ flex:1, position:"relative", minWidth:0 }}>
+            {/* Grid lines — positive zone */}
+            <div style={{ position:"absolute", top:0, left:0, right:0, height: hasNeg ? CHART_H*2+1 : CHART_H, pointerEvents:"none" }}>
+              {ticks.map(t => (
+                <div key={`gl${t}`} style={{ position:"absolute", left:0, right:0, top: toY(t), height:1, background: t===0 ? G.border : `${G.border}88` }}/>
+              ))}
+              {hasNeg && ticks.filter(t=>t>0).map(t => (
+                <div key={`gln${t}`} style={{ position:"absolute", left:0, right:0, top: CHART_H+1+(t/topTick)*CHART_H, height:1, background:`${G.border}88` }}/>
+              ))}
+            </div>
+
+            {/* Bars */}
+            <div style={{ display:"flex", gap, alignItems:"flex-start", height: hasNeg ? CHART_H*2+1 : CHART_H, paddingTop:0, position:"relative", zIndex:1 }}>
+              {buckets.map((b,i) => {
+                const v    = vals[i];
+                const col  = v > 0 ? G.accent : v < 0 ? G.red : G.textMuted;
+                const h    = Math.max(toH(v), v!==0 ? 2 : 0);
+                const isB  = i===best && v>0;
+                const isW  = i===worst && v<0;
+                const posH = v > 0 ? h : 0;
+                const negH = v < 0 ? h : 0;
+
+                return (
+                  <div key={b.label} style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", height: hasNeg ? CHART_H*2+1 : CHART_H }}>
+                    {/* Positive zone */}
+                    <div style={{ height:CHART_H, position:"relative", display:"flex", flexDirection:"column", justifyContent:"flex-end" }}>
+                      {/* Value label above bar */}
+                      {v !== 0 && (
+                        <div style={{ position:"absolute", bottom: posH + (v>0?4:-posH-16), left:"50%", transform:"translateX(-50%)", fontSize: buckets.length>8?6:8, color:col, fontFamily:G.fontMono, whiteSpace:"nowrap", fontWeight:600, zIndex:2, pointerEvents:"none" }}>
+                          {v>0 ? fmtShort(v) : ""}
+                        </div>
+                      )}
+                      {v > 0 && (
+                        <div style={{ height:posH, background:`linear-gradient(180deg,${col}ee 0%,${col}77 100%)`, border:`1px solid ${col}99`, borderRadius:"4px 4px 0 0", boxShadow: isB?`0 0 12px ${col}44`:"none", transition:"height 0.4s cubic-bezier(.4,0,.2,1)" }}/>
+                      )}
+                    </div>
+                    {/* Zero line */}
+                    {hasNeg && <div style={{ height:1, background:G.border, width:"100%", flexShrink:0 }}/>}
+                    {/* Negative zone */}
+                    {hasNeg && (
+                      <div style={{ height:CHART_H, position:"relative", display:"flex", flexDirection:"column", justifyContent:"flex-start" }}>
+                        {v < 0 && (
+                          <div style={{ height:negH, background:`linear-gradient(180deg,${col}77 0%,${col}ee 100%)`, border:`1px solid ${col}99`, borderRadius:"0 0 4px 4px", boxShadow: isW?`0 0 12px ${col}44`:"none", transition:"height 0.4s cubic-bezier(.4,0,.2,1)", position:"relative" }}>
+                            {/* Value label inside/below negative bar */}
+                            <div style={{ position:"absolute", top:negH>16?4:"100%", left:"50%", transform:"translateX(-50%)", fontSize: buckets.length>8?6:8, color:col, fontFamily:G.fontMono, whiteSpace:"nowrap", fontWeight:600, marginTop:2 }}>
+                              {fmtShort(v)}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {/* X label */}
+                    <div style={{ fontSize: buckets.length>8?7:9, color:G.textSec, textAlign:"center", marginTop:5, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", fontFamily:G.fontDisplay }}>
+                      {b.label}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </div>
     );
   };
 
-  // ── Donut Chart ────────────────────────────────────────────────────────────
+  // ── Donut Chart ────────────────────────────────────────────────────────
   const DonutChart = () => {
-    const size = 180, stroke = 28, r = (size - stroke) / 2, cx = size/2, cy = size/2, circ = 2 * Math.PI * r;
-    const absVals = vals.map(Math.abs);
-    const absTotal = absVals.reduce((s,v)=>s+v, 0);
-    let offset = 0;
-    const segments = absTotal === 0 ? [] : buckets.map((b,i) => {
-      const frac = absVals[i] / absTotal;
-      const dash = frac * circ;
-      const seg = { frac, dash, offset, color: vals[i] >= 0 ? PALETTE[i % PALETTE.length] : G.red, label: b.label, val: vals[i], i };
-      offset += dash;
-      return seg;
-    }).filter(s => s.frac > 0);
-
-    const showLegend = buckets.length > 3;
-    return (
-      <div style={{ display:"flex", flexDirection: showLegend ? "row" : "column", alignItems:"center", gap: showLegend ? 24 : 12, flexWrap:"wrap", justifyContent:"center", width:"100%" }}>
-        <div style={{ position:"relative", flexShrink:0 }}>
-          <svg width={size} height={size} style={{ transform:"rotate(-90deg)" }}>
-            {/* track */}
+    const size=180, stroke=28, r=(size-stroke)/2, cx=size/2, cy=size/2, circ=2*Math.PI*r;
+    const absVals=vals.map(Math.abs);
+    const absTotal=absVals.reduce((s,v)=>s+v,0);
+    let offset=0;
+    const segments=absTotal===0?[]:buckets.map((b,i)=>{
+      const frac=absVals[i]/absTotal; const dash=frac*circ;
+      const seg={frac,dash,offset,color:vals[i]>=0?PALETTE[i%PALETTE.length]:G.red,label:b.label,val:vals[i]};
+      offset+=dash; return seg;
+    }).filter(s=>s.frac>0);
+    const showLegend=buckets.length>3;
+    return(
+      <div style={{display:"flex",flexDirection:showLegend?"row":"column",alignItems:"center",gap:showLegend?24:12,flexWrap:"wrap",justifyContent:"center",width:"100%"}}>
+        <div style={{position:"relative",flexShrink:0}}>
+          <svg width={size} height={size} style={{transform:"rotate(-90deg)"}}>
             <circle cx={cx} cy={cy} r={r} fill="none" stroke={G.border} strokeWidth={stroke}/>
-            {segments.length === 0 && <circle cx={cx} cy={cy} r={r} fill="none" stroke={G.textMuted} strokeWidth={stroke} strokeDasharray={`${circ} ${circ}`} strokeDashoffset={0}/>}
-            {segments.map((s,i) => (
-              <circle key={i} cx={cx} cy={cy} r={r} fill="none"
-                stroke={s.color} strokeWidth={stroke}
-                strokeDasharray={`${s.dash - 1.5} ${circ - (s.dash - 1.5)}`}
-                strokeDashoffset={-s.offset}
-                style={{ transition:"stroke-dasharray 0.5s cubic-bezier(.4,0,.2,1), stroke-dashoffset 0.5s cubic-bezier(.4,0,.2,1)" }}
-              />
+            {segments.length===0&&<circle cx={cx} cy={cy} r={r} fill="none" stroke={G.textMuted} strokeWidth={stroke} strokeDasharray={`${circ} ${circ}`}/>}
+            {segments.map((s,i)=>(
+              <circle key={i} cx={cx} cy={cy} r={r} fill="none" stroke={s.color} strokeWidth={stroke}
+                strokeDasharray={`${s.dash-1.5} ${circ-(s.dash-1.5)}`} strokeDashoffset={-s.offset}
+                style={{transition:"all 0.5s cubic-bezier(.4,0,.2,1)"}}/>
             ))}
           </svg>
-          {/* center label */}
-          <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", pointerEvents:"none" }}>
-            <div style={{ fontSize:11, color:G.textSec, fontFamily:G.fontDisplay, letterSpacing:"0.06em", textTransform:"uppercase", marginBottom:2 }}>Total</div>
-            <div style={{ fontSize:16, fontWeight:800, color:pColor(total), fontFamily:G.fontUI, letterSpacing:"-0.03em", lineHeight:1 }}>{fmt(total)}</div>
+          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+            <div style={{fontSize:9,color:G.textSec,fontFamily:G.fontDisplay,letterSpacing:"0.06em",textTransform:"uppercase",marginBottom:2}}>Total</div>
+            <div style={{fontSize:15,fontWeight:800,color:pColor(total),fontFamily:G.fontUI,letterSpacing:"-0.03em",lineHeight:1}}>{fmt(total)}</div>
           </div>
         </div>
-        {/* Legend */}
-        {showLegend && (
-          <div style={{ display:"flex", flexDirection:"column", gap:5, minWidth:120, maxWidth:180 }}>
-            {segments.map((s,i) => (
-              <div key={i} style={{ display:"flex", alignItems:"center", gap:7 }}>
-                <div style={{ width:8, height:8, borderRadius:2, background:s.color, flexShrink:0 }}/>
-                <span style={{ fontSize:10, color:G.textSec, fontFamily:G.fontDisplay, flex:1 }}>{s.label}</span>
-                <span style={{ fontSize:10, color:pColor(s.val), fontFamily:G.fontMono, whiteSpace:"nowrap" }}>{fmt(s.val)}</span>
+        {showLegend?(
+          <div style={{display:"flex",flexDirection:"column",gap:5,minWidth:120,maxWidth:180}}>
+            {segments.map((s,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:7}}>
+                <div style={{width:8,height:8,borderRadius:2,background:s.color,flexShrink:0}}/>
+                <span style={{fontSize:10,color:G.textSec,fontFamily:G.fontDisplay,flex:1}}>{s.label}</span>
+                <span style={{fontSize:10,color:pColor(s.val),fontFamily:G.fontMono,whiteSpace:"nowrap"}}>{fmt(s.val)}</span>
               </div>
             ))}
           </div>
-        )}
-        {/* inline values for small donuts */}
-        {!showLegend && (
-          <div style={{ display:"flex", gap:16, flexWrap:"wrap", justifyContent:"center" }}>
-            {buckets.map((b,i) => (
-              <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
-                <div style={{ width:8, height:8, borderRadius:2, background:PALETTE[i%PALETTE.length] }}/>
-                <span style={{ fontSize:10, color:G.textSec, fontFamily:G.fontDisplay }}>{b.label}</span>
-                <span style={{ fontSize:10, color:pColor(vals[i]), fontFamily:G.fontMono }}>{fmt(vals[i])}</span>
+        ):(
+          <div style={{display:"flex",gap:16,flexWrap:"wrap",justifyContent:"center"}}>
+            {buckets.map((b,i)=>(
+              <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                <div style={{width:8,height:8,borderRadius:2,background:PALETTE[i%PALETTE.length]}}/>
+                <span style={{fontSize:10,color:G.textSec,fontFamily:G.fontDisplay}}>{b.label}</span>
+                <span style={{fontSize:10,color:pColor(vals[i]),fontFamily:G.fontMono}}>{fmt(vals[i])}</span>
               </div>
             ))}
           </div>
@@ -1021,54 +1073,50 @@ function OverviewSection({ trades, analTf, analPeriod }) {
     );
   };
 
-  const noData = buckets.every(b => b.count === 0);
+  const noData = !buckets.length || buckets.every(b=>b.count===0);
 
-  return (
-    <div style={{ marginBottom:32 }}>
-      {/* Section header */}
-      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:20 }}>
-        <div style={{ width:3, height:18, background:`linear-gradient(180deg,${G.accent},${G.blue})`, borderRadius:2 }}/>
-        <span style={{ fontSize:13, fontWeight:700, fontFamily:G.fontDisplay, letterSpacing:"-0.01em" }}>Overview</span>
-        <div style={{ flex:1, height:1, background:G.border, marginLeft:4 }}/>
+  return(
+    <div style={{marginBottom:32}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+        <div style={{width:3,height:18,background:`linear-gradient(180deg,${G.accent},${G.blue})`,borderRadius:2}}/>
+        <span style={{fontSize:13,fontWeight:700,fontFamily:G.fontDisplay,letterSpacing:"-0.01em"}}>Overview</span>
+        <div style={{flex:1,height:1,background:G.border,marginLeft:4}}/>
       </div>
-
-      <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:12, padding:20 }}>
-        {/* Controls row */}
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20, flexWrap:"wrap", gap:10 }}>
-          {/* Chart type toggle */}
-          <div style={{ display:"flex", background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:8, padding:3, gap:3 }}>
+      <div style={{background:G.surface,border:`1px solid ${G.border}`,borderRadius:12,padding:20}}>
+        {/* Controls */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:10}}>
+          <div style={{display:"flex",background:G.surfaceAlt,border:`1px solid ${G.border}`,borderRadius:8,padding:3,gap:3}}>
             {[{v:"bar",label:"▮ Bar"},{v:"donut",label:"◉ Donut"}].map(o=>(
-              <button key={o.v} onClick={()=>setChartType(o.v)} style={{ padding:"5px 14px", borderRadius:6, border:"none", cursor:"pointer", fontSize:10, fontFamily:G.fontDisplay, fontWeight:600, letterSpacing:"0.04em", transition:"all 0.15s", background:chartType===o.v?G.surfaceHov:"transparent", color:chartType===o.v?G.textPrimary:G.textSec, boxShadow:chartType===o.v?`0 0 0 1px ${G.borderHov}`:"none" }}>{o.label}</button>
+              <button key={o.v} onClick={()=>setChartType(o.v)} style={{padding:"5px 14px",borderRadius:6,border:"none",cursor:"pointer",fontSize:10,fontFamily:G.fontDisplay,fontWeight:600,transition:"all 0.15s",background:chartType===o.v?G.surfaceAlt:"transparent",color:chartType===o.v?G.textPrimary:G.textSec,outline:chartType===o.v?`1px solid ${G.border}`:"none"}}>{o.label}</button>
             ))}
           </div>
-          {/* Unit toggle */}
-          <div style={{ display:"flex", background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:8, padding:3, gap:3 }}>
+          <div style={{display:"flex",background:G.surfaceAlt,border:`1px solid ${G.border}`,borderRadius:8,padding:3,gap:3}}>
             {["R","USD"].map(u=>(
-              <button key={u} onClick={()=>setUnit(u)} style={{ padding:"5px 16px", borderRadius:6, border:"none", cursor:"pointer", fontSize:10, fontFamily:G.fontMono, fontWeight:600, transition:"all 0.15s", background:unit===u?G.accent:"transparent", color:unit===u?G.bg:G.textSec }}>{u}</button>
+              <button key={u} onClick={()=>setUnit(u)} style={{padding:"5px 16px",borderRadius:6,border:"none",cursor:"pointer",fontSize:10,fontFamily:G.fontMono,fontWeight:600,transition:"all 0.15s",background:unit===u?G.accent:"transparent",color:unit===u?G.bg:G.textSec}}>{u}</button>
             ))}
           </div>
         </div>
-
         {/* Summary cards */}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:20 }}>
-          {[
-            { label:"Total", val:total, sub: `${buckets.filter((_,i)=>vals[i]!==0).length} períodos` },
-            { label:"Best Period", val:vals[best]??0, sub: buckets[best]?.label??"-" },
-            { label:"Worst Period", val:vals[worst]??0, sub: buckets[worst]?.label??"-" },
-          ].map(card=>(
-            <div key={card.label} style={{ background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:9, padding:"12px 14px" }}>
-              <div style={{ fontSize:8, color:G.textSec, fontFamily:G.fontDisplay, letterSpacing:"0.14em", textTransform:"uppercase", marginBottom:6 }}>{card.label}</div>
-              <div style={{ fontSize:18, fontWeight:800, color:pColor(card.val), fontFamily:G.fontUI, letterSpacing:"-0.03em", lineHeight:1, marginBottom:3 }}>{fmt(card.val)}</div>
-              <div style={{ fontSize:10, color:G.textMuted, fontFamily:G.fontDisplay }}>{card.sub}</div>
-            </div>
-          ))}
-        </div>
-
+        {vals.length>0&&(
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:20}}>
+            {[
+              {label:"Total",val:total,sub:`${buckets.filter((_,i)=>vals[i]!==0).length} períodos`},
+              {label:"Best Period",val:vals[best]??0,sub:buckets[best]?.label??"-"},
+              {label:"Worst Period",val:vals[worst]??0,sub:buckets[worst]?.label??"-"},
+            ].map(card=>(
+              <div key={card.label} style={{background:G.surfaceAlt,border:`1px solid ${G.border}`,borderRadius:9,padding:"12px 14px"}}>
+                <div style={{fontSize:8,color:G.textSec,fontFamily:G.fontDisplay,letterSpacing:"0.14em",textTransform:"uppercase",marginBottom:6}}>{card.label}</div>
+                <div style={{fontSize:18,fontWeight:800,color:pColor(card.val),fontFamily:G.fontUI,letterSpacing:"-0.03em",lineHeight:1,marginBottom:3}}>{fmt(card.val)}</div>
+                <div style={{fontSize:10,color:G.textMuted,fontFamily:G.fontDisplay}}>{card.sub}</div>
+              </div>
+            ))}
+          </div>
+        )}
         {/* Chart */}
-        <div style={{ minHeight:180, display:"flex", alignItems:"center", justifyContent:"center", transition:"opacity 0.25s" }}>
+        <div style={{minHeight:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
           {noData
-            ? <div style={{ color:G.textMuted, fontSize:12, textAlign:"center", padding:"32px 0" }}>Sin trades en este período</div>
-            : chartType==="bar" ? <BarChart/> : <DonutChart/>
+            ?<div style={{color:G.textMuted,fontSize:12,textAlign:"center",padding:"32px 0"}}>Sin trades en este período</div>
+            :chartType==="bar"?<BarChart/>:<DonutChart/>
           }
         </div>
       </div>
