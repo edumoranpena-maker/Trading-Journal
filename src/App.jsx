@@ -1075,6 +1075,8 @@ function OverviewSection({ trades, analTf, analPeriod }) {
     </div>
   );
 }
+
+function GroupBars({ data, barColor }) {
   const col = barColor || G.accent;
   if (!data.length) return <div style={{ color:G.textMuted, fontSize:11, textAlign:"center", padding:16 }}>Sin datos</div>;
   return (
