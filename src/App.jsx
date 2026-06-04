@@ -2822,6 +2822,154 @@ export default function App() {
               </div>
             </div>
 
+            {/* Executor Trend */}
+            {(()=>{
+              // Build efficiency per bucket (same logic as OverviewSection)
+              const effBuckets = (()=>{
+                const allExec = trades.filter(t=>t.ejecutado);
+                const allTrades = trades;
+                const calcEff = (ts) => {
+                  const ex   = ts.filter(t=>t.ejecutado);
+                  const vne  = ts.filter(t=>!t.ejecutado && t.validez>=3);
+                  const eR   = ex.reduce((s,t)=>s+t.rr,0);
+                  const mR   = vne.reduce((s,t)=>s+t.rr,0);
+                  const tot  = eR + mR;
+                  return tot!==0 ? Math.max(0,Math.min(100,(eR/tot)*100)) : null;
+                };
+                if (analTf==="quarterly" && analPeriod && analPeriod.includes("-Q")) {
+                  const [yr,qStr] = analPeriod.split("-Q");
+                  const year=parseInt(yr), q=parseInt(qStr), sm=(q-1)*3;
+                  return [0,1,2].map(i=>{
+                    const mo=sm+i;
+                    const ts=allTrades.filter(t=>{try{const d=parseLocalDate(t.date);return d.getFullYear()===year&&d.getMonth()===mo;}catch(e){return false;}});
+                    return {label:(MESES_ES[mo]||"").slice(0,3), eff:calcEff(ts)};
+                  });
+                }
+                if (analTf==="annual" && analPeriod) {
+                  const year=parseInt(analPeriod);
+                  return MESES_ES.map((name,mo)=>{
+                    const ts=allTrades.filter(t=>{try{const d=parseLocalDate(t.date);return d.getFullYear()===year&&d.getMonth()===mo;}catch(e){return false;}});
+                    return {label:name.slice(0,3), eff:calcEff(ts)};
+                  });
+                }
+                // alltime
+                const yMap={};
+                allTrades.forEach(t=>{try{const y=parseLocalDate(t.date).getFullYear();if(!yMap[y])yMap[y]=[];yMap[y].push(t);}catch(e){}});
+                return Object.keys(yMap).sort().map(y=>({label:`${y}`,eff:calcEff(yMap[y])}));
+              })();
+
+              const points   = effBuckets.filter(b=>b.eff!==null);
+              const latest   = points.length ? points[points.length-1].eff : null;
+              const prev     = points.length>1 ? points[points.length-2].eff : null;
+              const delta    = latest!==null && prev!==null ? latest-prev : null;
+              const trend    = delta===null?"—":delta>2?"↑ Improving":delta<-2?"↓ Declining":"→ Stable";
+              const trendCol = delta===null?G.textMuted:delta>2?G.accent:delta<-2?G.red:G.textSec;
+              const latestCol= latest===null?G.textMuted:latest>=85?G.accent:latest>=65?G.blue:latest>=40?G.yellow:G.red;
+
+              // Sparkline
+              const W=220, H=72, PAD=6;
+              const effs = effBuckets.map(b=>b.eff??null);
+              const validEffs = effs.filter(v=>v!==null);
+              const minE = validEffs.length ? Math.max(0,  Math.min(...validEffs)-10) : 0;
+              const maxE = validEffs.length ? Math.min(100,Math.max(...validEffs)+10) : 100;
+              const eRange = maxE-minE || 1;
+              const [hovered, setHovered] = useState(null);
+
+              const pts = effBuckets.map((b,i)=>({
+                x: PAD + (effBuckets.length>1 ? i/(effBuckets.length-1) : 0.5) * (W-PAD*2),
+                y: b.eff!==null ? PAD + (1-(b.eff-minE)/eRange)*(H-PAD*2) : null,
+                eff: b.eff, label: b.label, i
+              }));
+
+              // Build smooth SVG path through non-null points
+              const validPts = pts.filter(p=>p.y!==null);
+              let path="";
+              if(validPts.length===1){
+                path=`M${validPts[0].x},${validPts[0].y}`;
+              } else if(validPts.length>1){
+                path=`M${validPts[0].x},${validPts[0].y}`;
+                for(let i=1;i<validPts.length;i++){
+                  const p0=validPts[i-1], p1=validPts[i];
+                  const cx=(p0.x+p1.x)/2;
+                  path+=` C${cx},${p0.y} ${cx},${p1.y} ${p1.x},${p1.y}`;
+                }
+              }
+
+              // Area fill path
+              const lastPt = validPts[validPts.length-1];
+              const firstPt = validPts[0];
+              const areaPath = path + (validPts.length>0?` L${lastPt.x},${H} L${firstPt.x},${H} Z`:"");
+
+              return (
+                <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12, display:"flex", flexDirection:"column", gap:10 }}>
+                  <SectionHeader title="Executor Trend"/>
+                  <div style={{ display:"flex", alignItems:"flex-start", gap:20, flexWrap:"wrap" }}>
+                    {/* Left: big number + trend */}
+                    <div style={{ display:"flex", flexDirection:"column", gap:6, minWidth:100 }}>
+                      <div style={{ fontSize:34, fontWeight:800, fontFamily:G.fontUI, color:latestCol, lineHeight:1, letterSpacing:"-0.04em" }}>
+                        {latest!==null?`${latest.toFixed(1)}%`:"—"}
+                      </div>
+                      <div style={{ fontSize:11, fontWeight:600, color:trendCol, fontFamily:G.fontDisplay, letterSpacing:"0.02em" }}>{trend}</div>
+                      {delta!==null && <div style={{ fontSize:9, color:G.textMuted, fontFamily:G.fontMono }}>{delta>0?`+${delta.toFixed(1)}`:delta.toFixed(1)}% vs prev</div>}
+                    </div>
+
+                    {/* Right: sparkline */}
+                    <div style={{ flex:1, minWidth:160, position:"relative" }}>
+                      {validPts.length < 2
+                        ? <div style={{ fontSize:10, color:G.textMuted, padding:"20px 0" }}>Sin datos suficientes para mostrar tendencia</div>
+                        : <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ overflow:"visible", display:"block" }}
+                            onMouseLeave={()=>setHovered(null)}>
+                            <defs>
+                              <linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor={G.blue} stopOpacity="0.25"/>
+                                <stop offset="100%" stopColor={G.blue} stopOpacity="0"/>
+                              </linearGradient>
+                            </defs>
+                            {/* Area */}
+                            {validPts.length>1 && <path d={areaPath} fill="url(#trendGrad)"/>}
+                            {/* Line */}
+                            <path d={path} fill="none" stroke={G.blue} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            {/* Points */}
+                            {validPts.map((p,i)=>{
+                              const isLast=i===validPts.length-1;
+                              const isHov=hovered===p.i;
+                              return (
+                                <g key={i} onMouseEnter={()=>setHovered(p.i)} style={{cursor:"default"}}>
+                                  <circle cx={p.x} cy={p.y} r={isHov||isLast?5:3}
+                                    fill={isLast?G.blue:G.surface} stroke={G.blue}
+                                    strokeWidth={isLast?0:1.5}
+                                    style={{transition:"r 0.15s"}}/>
+                                  {isLast && <circle cx={p.x} cy={p.y} r={8} fill={`${G.blue}22`}/>}
+                                  {/* Tooltip */}
+                                  {isHov && (
+                                    <g>
+                                      <rect x={p.x-28} y={p.y-28} width={56} height={20} rx={4}
+                                        fill={G.surfaceAlt} stroke={G.border} strokeWidth={1}/>
+                                      <text x={p.x} y={p.y-14} textAnchor="middle"
+                                        fontSize={8} fill={G.textPrimary} fontFamily={G.fontMono}>
+                                        {p.label} {p.eff!==null?`${p.eff.toFixed(1)}%`:"—"}
+                                      </text>
+                                    </g>
+                                  )}
+                                </g>
+                              );
+                            })}
+                          </svg>
+                      }
+                      {/* X labels */}
+                      {validPts.length>=2 && (
+                        <div style={{ display:"flex", justifyContent:"space-between", marginTop:4, paddingLeft:PAD, paddingRight:PAD }}>
+                          {effBuckets.filter((_,i)=>i===0||i===Math.floor(effBuckets.length/2)||i===effBuckets.length-1).map((b,i)=>(
+                            <span key={i} style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay }}>{b.label}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Execution Insight */}
             <div style={{ background:`${G.blue}0e`, border:`1px solid ${G.blue}33`, borderRadius:10, padding:"14px 18px", marginBottom:12, display:"flex", alignItems:"flex-start", gap:12 }}>
               <span style={{ fontSize:16, flexShrink:0, marginTop:1 }}>💡</span>
