@@ -2637,6 +2637,9 @@ export default function App() {
 
         {/* ══════════ ANALYSIS ═════════════════════════════════════════════ */}
         {tab === "analisis" && (()=>{
+          // ── Executor Trend hovered state (must be at component level) ──
+          const [trendHovered, setTrendHovered] = useState(null);
+
           // ── Executor metrics ────────────────────────────────────────────
           const atExec    = analTrades.filter(t=>t.ejecutado);
           const atNonExec = analTrades.filter(t=>!t.ejecutado);
@@ -2742,8 +2745,8 @@ export default function App() {
               </div>
             </div>
 
-            {/* 3 metric cards */}
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:12 }}>
+            {/* 2 metric cards */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:12, marginBottom:12 }}>
 
               {/* Execution Efficiency */}
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:12 }}>
@@ -2796,30 +2799,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Trust Deviation Index */}
-              <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:12 }}>
-                <SectionHeader title="Trust Deviation Index"/>
-                <div style={{ fontSize:36, fontWeight:800, fontFamily:G.fontUI, color:tdiCol, lineHeight:1, letterSpacing:"-0.04em" }}>
-                  {tdi!==null?`${tdi.toFixed(1)}%`:"—"}
-                </div>
-                <div style={{ display:"inline-flex", alignSelf:"flex-start", background:`${tdiCol}18`, border:`1px solid ${tdiCol}44`, borderRadius:5, padding:"3px 9px" }}>
-                  <span style={{ fontSize:9, fontWeight:600, color:tdiCol, fontFamily:G.fontDisplay, letterSpacing:"0.06em" }}>{tdiStatus}</span>
-                </div>
-                <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:4 }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
-                    <span style={{ color:G.textSec }}>Valid Trades</span>
-                    <span style={{ color:G.textPrimary, fontFamily:G.fontMono, fontWeight:600 }}>{totalValid}</span>
-                  </div>
-                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
-                    <span style={{ color:G.textSec }}>Executed</span>
-                    <span style={{ color:G.accent, fontFamily:G.fontMono, fontWeight:600 }}>{atValidExec.length}</span>
-                  </div>
-                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
-                    <span style={{ color:G.textSec }}>Missed</span>
-                    <span style={{ color:G.red, fontFamily:G.fontMono, fontWeight:600 }}>{atValidNonExec.length}</span>
-                  </div>
-                </div>
-              </div>
             </div>
 
             {/* Executor Trend */}
@@ -2873,7 +2852,7 @@ export default function App() {
               const minE = validEffs.length ? Math.max(0,  Math.min(...validEffs)-10) : 0;
               const maxE = validEffs.length ? Math.min(100,Math.max(...validEffs)+10) : 100;
               const eRange = maxE-minE || 1;
-              const [hovered, setHovered] = useState(null);
+              const [hovered, setHovered] = [trendHovered, setTrendHovered];
 
               const pts = effBuckets.map((b,i)=>({
                 x: PAD + (effBuckets.length>1 ? i/(effBuckets.length-1) : 0.5) * (W-PAD*2),
