@@ -925,21 +925,17 @@ function OverviewSection({ trades, analTf, analPeriod }) {
     const hasNeg = vals.some(v => v < 0);
     const hasPos = vals.some(v => v > 0);
 
-    // Clean rounded step: target ~5 levels, no ugly decimals
+    // One clean step above/below the actual max
     const niceStep = (() => {
-      const target = maxAbs / 5;
-      const mag    = Math.pow(10, Math.floor(Math.log10(Math.max(target, 0.01))));
-      const nice   = [1, 2, 5, 10];
-      const mult   = nice.find(n => n * mag >= target) || 10;
-      return mult * mag;
+      if (maxAbs <= 0.01) return 1;
+      const mag  = Math.pow(10, Math.floor(Math.log10(maxAbs)));
+      const nice = [1, 2, 5, 10];
+      return (nice.find(n => n * mag > maxAbs / 5) || 10) * mag;
     })();
 
-    const topTick = Math.ceil(maxAbs / niceStep) * niceStep;
-    // Keep ≤6 ticks; if more, double the step
-    const rawCount = Math.round(topTick / niceStep);
-    const step  = rawCount > 6 ? niceStep * 2 : niceStep;
-    const top   = Math.ceil(maxAbs / step) * step;
-    const ticks = Array.from({ length: Math.round(top / step) + 1 }, (_, i) => i * step);
+    // top = one step beyond the actual max value
+    const top   = Math.ceil(maxAbs / niceStep) * niceStep + niceStep;
+    const ticks = Array.from({ length: Math.round(top / niceStep) + 1 }, (_, i) => i * niceStep);
 
     // px helpers
     const toH   = v => (Math.abs(v) / top) * CHART_H;
@@ -1008,7 +1004,7 @@ function OverviewSection({ trades, analTf, analPeriod }) {
                       {v > 0 && <>
                         {/* Value label ABOVE bar */}
                         <div style={{ position:"absolute", bottom: posH + 4, left:"50%", transform:"translateX(-50%)",
-                          fontSize:fs, color:labelColor, fontFamily:G.fontMono, fontWeight:700,
+                          fontSize:fs, color:labelColor, fontFamily:G.fontMono, fontWeight:400,
                           whiteSpace:"nowrap", pointerEvents:"none", zIndex:3,
                           textShadow: theme==="light" ? "none" : "0 1px 3px rgba(0,0,0,0.8)" }}>
                           {fmtShort(v)}
@@ -1032,7 +1028,7 @@ function OverviewSection({ trades, analTf, analPeriod }) {
                             transition:"height 0.4s cubic-bezier(.4,0,.2,1)" }}/>
                           {/* Value label BELOW bar */}
                           <div style={{ position:"absolute", top: negH + 4, left:"50%", transform:"translateX(-50%)",
-                            fontSize:fs, color:labelColor, fontFamily:G.fontMono, fontWeight:700,
+                            fontSize:fs, color:labelColor, fontFamily:G.fontMono, fontWeight:400,
                             whiteSpace:"nowrap", pointerEvents:"none", zIndex:3,
                             textShadow: theme==="light" ? "none" : "0 1px 3px rgba(0,0,0,0.8)" }}>
                             {fmtShort(v)}
