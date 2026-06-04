@@ -913,139 +913,127 @@ function OverviewSection({ trades, analTf, analPeriod }) {
   // ── Bar Chart with Y-axis, gridlines, value labels ──────────────────────
   const BarChart = () => {
     const { theme } = useContext(SettingsCtx);
-    const labelColor = theme === "light" ? "#111" : "#fff";
-
-    const CHART_H = 160; // px per zone (pos / neg)
+    const labelColor = theme === "light" ? "#555" : "#ccc";
+    const TOTAL_H = 320; // total chart height in px (shared between pos + neg zones)
     const Y_W     = 46;
     const GAP     = buckets.length > 8 ? 3 : buckets.length > 4 ? 6 : 10;
 
-    const maxPos = Math.max(...vals.filter(v=>v>0), 0);
-    const maxNeg = Math.max(...vals.filter(v=>v<0).map(Math.abs), 0);
-    const hasNeg = vals.some(v => v < 0);
-    const hasPos = vals.some(v => v > 0);
+    const rawMax  = Math.max(...vals, 0);
+    const rawMin  = Math.min(...vals, 0);
+    const hasNeg  = rawMin < 0;
+    const hasPos  = rawMax > 0;
 
-    // niceStep: smallest clean interval such that ceil(max/step)*step > max
-    const niceStep = (max) => {
-      if (max <= 0.01) return 1;
-      const mag  = Math.pow(10, Math.floor(Math.log10(max)));
-      const nice = [1, 2, 5, 10];
-      // find step where ceil(max/step)*step gives exactly ONE interval above max
-      for (const n of nice) {
-        const s = n * mag;
-        const top = Math.ceil(max / s) * s;
-        if (top > max) return s;
+    // Single step for the whole axis
+    const absMax  = Math.max(Math.abs(rawMax), Math.abs(rawMin), 0.01);
+    const step = (() => {
+      const mag  = Math.pow(10, Math.floor(Math.log10(absMax)));
+      for (const n of [1, 2, 5, 10]) {
+        const s   = n * mag;
+        const top = Math.ceil(rawMax  / s) * s;
+        const bot = Math.floor(rawMin / s) * s;
+        if (top > rawMax && bot < rawMin) return s;
+        if (!hasNeg && top > rawMax)      return s;
+        if (!hasPos && bot < rawMin)      return s;
       }
       return 10 * mag;
-    };
+    })();
 
-    const stepPos  = niceStep(maxPos);
-    const stepNeg  = niceStep(maxNeg);
-    const topPos   = maxPos > 0 ? Math.ceil(maxPos / stepPos) * stepPos : 0;
-    const topNeg   = maxNeg > 0 ? Math.ceil(maxNeg / stepNeg) * stepNeg : 0;
+    const yMax = hasPos ? Math.ceil(rawMax  / step) * step : 0;
+    const yMin = hasNeg ? Math.floor(rawMin / step) * step : 0;
+    const yRange = yMax - yMin; // total domain
 
-    const ticksPos = topPos > 0 ? Array.from({ length: Math.round(topPos / stepPos) + 1 }, (_, i) => i * stepPos) : [0];
-    const ticksNeg = topNeg > 0 ? Array.from({ length: Math.round(topNeg / stepNeg) + 1 }, (_, i) => i * stepNeg) : [];
+    // px helpers — unified scale
+    const zeroY  = (yMax / yRange) * TOTAL_H;          // px from top where zero sits
+    const valToY = v => (yMax - v) / yRange * TOTAL_H; // px from top
 
-    // px helpers — each zone mapped to its own top
-    const posH  = v => v > 0 ? (v / topPos) * CHART_H : 0;
-    const negH  = v => v < 0 ? (Math.abs(v) / topNeg) * CHART_H : 0;
-    const gridY = v => CHART_H - (v / (topPos || 1)) * CHART_H; // pos grid line top offset
+    // Ticks: every step from yMin to yMax
+    const ticks = [];
+    for (let t = yMin; t <= yMax + step * 0.01; t = Math.round((t + step) * 1e9) / 1e9) {
+      ticks.push(Math.round(t * 1e9) / 1e9);
+    }
 
     const fmtTick = v => {
-      if (unit === "R") {
-        if (v === 0) return "0";
-        return Number.isInteger(v) ? `${v}R` : `${v % 1 === 0 ? v : v.toFixed(v < 1 ? 2 : 1)}R`;
-      }
+      if (unit === "R") return v === 0 ? "0" : `${v > 0 ? "" : ""}${Number.isInteger(v) ? v : v.toFixed(1)}R`;
       if (v === 0) return "$0";
-      return v >= 1000 ? `$${(v/1000).toFixed(1)}k` : `$${v}`;
+      return Math.abs(v) >= 1000 ? `${v<0?"-":""}$${(Math.abs(v)/1000).toFixed(1)}k` : `${v<0?"-":""}$${Math.abs(v)}`;
     };
 
     return (
-      <div style={{ width:"100%", overSelect:"none", paddingTop:16 /* room for top labels */ }}>
+      <div style={{ width:"100%", userSelect:"none", paddingTop:20 }}>
         <div style={{ display:"flex", width:"100%" }}>
 
-          {/* ── Y-axis column ── */}
-          <div style={{ width:Y_W, flexShrink:0, position:"relative", height: hasNeg ? CHART_H*2+2 : CHART_H }}>
-            {ticksPos.map(t => (
-              <div key={`pt${t}`} style={{ position:"absolute", right:8, top: gridY(t) - 5, fontSize:8, color:G.textMuted, fontFamily:G.fontMono, textAlign:"right", whiteSpace:"nowrap", lineHeight:1 }}>
+          {/* Y-axis */}
+          <div style={{ width:Y_W, flexShrink:0, position:"relative", height:TOTAL_H }}>
+            {ticks.map(t => (
+              <div key={t} style={{ position:"absolute", right:8, top: valToY(t) - 5,
+                fontSize:8, color: t===0 ? G.textSec : G.textMuted,
+                fontFamily:G.fontMono, textAlign:"right", whiteSpace:"nowrap", lineHeight:1,
+                fontWeight: t===0 ? 600 : 400 }}>
                 {fmtTick(t)}
-              </div>
-            ))}
-            {hasNeg && ticksNeg.filter(t=>t>0).map(t => (
-              <div key={`nt${t}`} style={{ position:"absolute", right:8, top: CHART_H + 2 + (t/topNeg)*CHART_H - 5, fontSize:8, color:G.textMuted, fontFamily:G.fontMono, textAlign:"right", whiteSpace:"nowrap", lineHeight:1 }}>
-                {fmtTick(-t)}
               </div>
             ))}
           </div>
 
-          {/* ── Chart area ── */}
-          <div style={{ flex:1, minWidth:0, position:"relative" }}>
+          {/* Chart area */}
+          <div style={{ flex:1, minWidth:0, position:"relative", height:TOTAL_H }}>
 
             {/* Grid lines */}
-            <div style={{ position:"absolute", inset:0, pointerEvents:"none", zIndex:0 }}>
-              {ticksPos.map(t => (
-                <div key={`gl${t}`} style={{ position:"absolute", left:0, right:0, top: gridY(t), height:1,
-                  background: t===0 ? G.border : `${G.border}66` }}/>
-              ))}
-              {hasNeg && ticksNeg.filter(t=>t>0).map(t => (
-                <div key={`gln${t}`} style={{ position:"absolute", left:0, right:0,
-                  top: CHART_H + 2 + (t/topNeg)*CHART_H, height:1, background:`${G.border}66` }}/>
-              ))}
-              {hasNeg && <div style={{ position:"absolute", left:0, right:0, top:CHART_H, height:2, background:G.border }}/>}
-            </div>
+            {ticks.map(t => (
+              <div key={t} style={{ position:"absolute", left:0, right:0, top: valToY(t), height: t===0 ? 2 : 1,
+                background: t===0 ? G.border : `${G.border}55`, pointerEvents:"none", zIndex:0 }}/>
+            ))}
 
-            {/* Bars row */}
-            <div style={{ display:"flex", gap:GAP, height: hasNeg ? CHART_H*2+2 : CHART_H, position:"relative", zIndex:1 }}>
+            {/* Bars */}
+            <div style={{ display:"flex", gap:GAP, height:"100%", position:"relative", zIndex:1, alignItems:"flex-start" }}>
               {buckets.map((b, i) => {
-                const v    = vals[i];
-                const col  = v > 0 ? G.accent : v < 0 ? G.red : G.textMuted;
-                const pH   = v > 0 ? Math.max(posH(v), 2) : 0;
-                const nH   = v < 0 ? Math.max(negH(v), 2) : 0;
-                const isB  = i === best  && v > 0;
-                const isW  = i === worst && v < 0;
-                const fs   = buckets.length > 8 ? 6 : 8;
+                const v   = vals[i];
+                const col = v > 0 ? G.accent : v < 0 ? G.red : G.textMuted;
+                const isB = i === best  && v > 0;
+                const isW = i === worst && v < 0;
+                const fs  = buckets.length > 8 ? 6 : 8;
+
+                // Bar geometry in unified px space
+                const barTop    = v >= 0 ? valToY(v)    : zeroY;
+                const barBottom = v >= 0 ? zeroY        : valToY(v);
+                const barH      = Math.max(barBottom - barTop, v !== 0 ? 2 : 0);
 
                 return (
-                  <div key={b.label} style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", height:"100%" }}>
+                  <div key={b.label} style={{ flex:1, minWidth:0, position:"relative", height:"100%" }}>
 
-                    {/* Positive zone */}
-                    <div style={{ height:CHART_H, display:"flex", flexDirection:"column", justifyContent:"flex-end", position:"relative" }}>
-                      {v > 0 && <>
-                        <div style={{ position:"absolute", bottom: pH + 4, left:"50%", transform:"translateX(-50%)",
-                          fontSize:fs, color:labelColor, fontFamily:G.fontMono, fontWeight:400,
-                          whiteSpace:"nowrap", pointerEvents:"none", zIndex:3,
-                          textShadow: theme==="light" ? "none" : "0 1px 3px rgba(0,0,0,0.8)" }}>
-                          {fmtShort(v)}
-                        </div>
-                        <div style={{ height:pH, background:`linear-gradient(180deg,${col}ee,${col}88)`,
-                          border:`1px solid ${col}99`, borderRadius:"4px 4px 0 0",
-                          boxShadow: isB ? `0 0 14px ${col}55` : "none",
-                          transition:"height 0.4s cubic-bezier(.4,0,.2,1)" }}/>
-                      </>}
-                    </div>
+                    {/* Bar */}
+                    <div style={{
+                      position:"absolute", left:0, right:0,
+                      top: barTop, height: barH,
+                      background: v > 0
+                        ? `linear-gradient(180deg,${col}ee,${col}88)`
+                        : `linear-gradient(180deg,${col}88,${col}ee)`,
+                      border:`1px solid ${col}99`,
+                      borderRadius: v >= 0 ? "4px 4px 0 0" : "0 0 4px 4px",
+                      boxShadow: (isB || isW) ? `0 0 14px ${col}44` : "none",
+                      transition:"all 0.4s cubic-bezier(.4,0,.2,1)"
+                    }}/>
 
-                    {/* Negative zone */}
-                    {hasNeg && (
-                      <div style={{ height:CHART_H+2, display:"flex", flexDirection:"column", justifyContent:"flex-start", position:"relative" }}>
-                        {v < 0 && <>
-                          <div style={{ height:nH, background:`linear-gradient(180deg,${col}88,${col}ee)`,
-                            border:`1px solid ${col}99`, borderRadius:"0 0 4px 4px",
-                            boxShadow: isW ? `0 0 14px ${col}55` : "none",
-                            transition:"height 0.4s cubic-bezier(.4,0,.2,1)" }}/>
-                          <div style={{ position:"absolute", top: nH + 4, left:"50%", transform:"translateX(-50%)",
-                            fontSize:fs, color:labelColor, fontFamily:G.fontMono, fontWeight:400,
-                            whiteSpace:"nowrap", pointerEvents:"none", zIndex:3,
-                            textShadow: theme==="light" ? "none" : "0 1px 3px rgba(0,0,0,0.8)" }}>
-                            {fmtShort(v)}
-                          </div>
-                        </>}
+                    {/* Value label — above positive, below negative */}
+                    {v !== 0 && (
+                      <div style={{
+                        position:"absolute",
+                        top: v > 0 ? barTop - 16 : barTop + barH + 4,
+                        left:"50%", transform:"translateX(-50%)",
+                        fontSize:fs, color:labelColor, fontFamily:G.fontMono, fontWeight:400,
+                        whiteSpace:"nowrap", pointerEvents:"none", zIndex:3,
+                        textShadow: theme==="light" ? "none" : "0 1px 3px rgba(0,0,0,0.6)"
+                      }}>
+                        {fmtShort(v)}
                       </div>
                     )}
 
-                    {/* X-axis label */}
-                    <div style={{ fontSize: buckets.length>8?7:9, color:G.textSec, textAlign:"center",
-                      marginTop:4, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis",
-                      fontFamily:G.fontDisplay, flexShrink:0 }}>
+                    {/* X label */}
+                    <div style={{
+                      position:"absolute", bottom:-20, left:"50%", transform:"translateX(-50%)",
+                      fontSize: buckets.length>8?7:9, color:G.textSec,
+                      whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis",
+                      fontFamily:G.fontDisplay, textAlign:"center", width:"100%"
+                    }}>
                       {b.label}
                     </div>
                   </div>
@@ -1054,6 +1042,8 @@ function OverviewSection({ trades, analTf, analPeriod }) {
             </div>
           </div>
         </div>
+        {/* spacer for X labels */}
+        <div style={{ height:24 }}/>
       </div>
     );
   };
