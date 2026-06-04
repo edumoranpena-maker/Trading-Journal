@@ -921,25 +921,35 @@ function OverviewSection({ trades, analTf, analPeriod }) {
 
     const maxPos = Math.max(...vals.filter(v=>v>0), 0);
     const maxNeg = Math.max(...vals.filter(v=>v<0).map(Math.abs), 0);
-    const maxAbs = Math.max(maxPos, maxNeg, 0.01);
     const hasNeg = vals.some(v => v < 0);
     const hasPos = vals.some(v => v > 0);
 
-    // One clean step above/below the actual max
-    const niceStep = (() => {
-      if (maxAbs <= 0.01) return 1;
-      const mag  = Math.pow(10, Math.floor(Math.log10(maxAbs)));
+    // niceStep: smallest clean interval such that ceil(max/step)*step > max
+    const niceStep = (max) => {
+      if (max <= 0.01) return 1;
+      const mag  = Math.pow(10, Math.floor(Math.log10(max)));
       const nice = [1, 2, 5, 10];
-      return (nice.find(n => n * mag > maxAbs / 5) || 10) * mag;
-    })();
+      // find step where ceil(max/step)*step gives exactly ONE interval above max
+      for (const n of nice) {
+        const s = n * mag;
+        const top = Math.ceil(max / s) * s;
+        if (top > max) return s;
+      }
+      return 10 * mag;
+    };
 
-    // top = one step beyond the actual max value
-    const top   = Math.ceil(maxAbs / niceStep) * niceStep + niceStep;
-    const ticks = Array.from({ length: Math.round(top / niceStep) + 1 }, (_, i) => i * niceStep);
+    const stepPos  = niceStep(maxPos);
+    const stepNeg  = niceStep(maxNeg);
+    const topPos   = maxPos > 0 ? Math.ceil(maxPos / stepPos) * stepPos : 0;
+    const topNeg   = maxNeg > 0 ? Math.ceil(maxNeg / stepNeg) * stepNeg : 0;
 
-    // px helpers
-    const toH   = v => (Math.abs(v) / top) * CHART_H;
-    const toTopY = v => CHART_H - (v / top) * CHART_H; // distance from top of pos zone
+    const ticksPos = topPos > 0 ? Array.from({ length: Math.round(topPos / stepPos) + 1 }, (_, i) => i * stepPos) : [0];
+    const ticksNeg = topNeg > 0 ? Array.from({ length: Math.round(topNeg / stepNeg) + 1 }, (_, i) => i * stepNeg) : [];
+
+    // px helpers — each zone mapped to its own top
+    const posH  = v => v > 0 ? (v / topPos) * CHART_H : 0;
+    const negH  = v => v < 0 ? (Math.abs(v) / topNeg) * CHART_H : 0;
+    const gridY = v => CHART_H - (v / (topPos || 1)) * CHART_H; // pos grid line top offset
 
     const fmtTick = v => {
       if (unit === "R") {
@@ -955,14 +965,14 @@ function OverviewSection({ trades, analTf, analPeriod }) {
         <div style={{ display:"flex", width:"100%" }}>
 
           {/* ── Y-axis column ── */}
-          <div style={{ width:Y_W, flexShrink:0, position:"relative", height: hasNeg ? CHART_H*2+1 : CHART_H }}>
-            {ticks.map(t => (
-              <div key={`pt${t}`} style={{ position:"absolute", right:8, top: toTopY(t) - 5, fontSize:8, color:G.textMuted, fontFamily:G.fontMono, textAlign:"right", whiteSpace:"nowrap", lineHeight:1 }}>
+          <div style={{ width:Y_W, flexShrink:0, position:"relative", height: hasNeg ? CHART_H*2+2 : CHART_H }}>
+            {ticksPos.map(t => (
+              <div key={`pt${t}`} style={{ position:"absolute", right:8, top: gridY(t) - 5, fontSize:8, color:G.textMuted, fontFamily:G.fontMono, textAlign:"right", whiteSpace:"nowrap", lineHeight:1 }}>
                 {fmtTick(t)}
               </div>
             ))}
-            {hasNeg && ticks.filter(t=>t>0).map(t => (
-              <div key={`nt${t}`} style={{ position:"absolute", right:8, top: CHART_H + 1 + (t/top)*CHART_H - 5, fontSize:8, color:G.textMuted, fontFamily:G.fontMono, textAlign:"right", whiteSpace:"nowrap", lineHeight:1 }}>
+            {hasNeg && ticksNeg.filter(t=>t>0).map(t => (
+              <div key={`nt${t}`} style={{ position:"absolute", right:8, top: CHART_H + 2 + (t/topNeg)*CHART_H - 5, fontSize:8, color:G.textMuted, fontFamily:G.fontMono, textAlign:"right", whiteSpace:"nowrap", lineHeight:1 }}>
                 {fmtTick(-t)}
               </div>
             ))}
@@ -973,15 +983,14 @@ function OverviewSection({ trades, analTf, analPeriod }) {
 
             {/* Grid lines */}
             <div style={{ position:"absolute", inset:0, pointerEvents:"none", zIndex:0 }}>
-              {ticks.map(t => (
-                <div key={`gl${t}`} style={{ position:"absolute", left:0, right:0, top: toTopY(t), height:1,
+              {ticksPos.map(t => (
+                <div key={`gl${t}`} style={{ position:"absolute", left:0, right:0, top: gridY(t), height:1,
                   background: t===0 ? G.border : `${G.border}66` }}/>
               ))}
-              {hasNeg && ticks.filter(t=>t>0).map(t => (
+              {hasNeg && ticksNeg.filter(t=>t>0).map(t => (
                 <div key={`gln${t}`} style={{ position:"absolute", left:0, right:0,
-                  top: CHART_H + 1 + (t/top)*CHART_H, height:1, background:`${G.border}66` }}/>
+                  top: CHART_H + 2 + (t/topNeg)*CHART_H, height:1, background:`${G.border}66` }}/>
               ))}
-              {/* Zero line — bold */}
               {hasNeg && <div style={{ position:"absolute", left:0, right:0, top:CHART_H, height:2, background:G.border }}/>}
             </div>
 
@@ -990,8 +999,8 @@ function OverviewSection({ trades, analTf, analPeriod }) {
               {buckets.map((b, i) => {
                 const v    = vals[i];
                 const col  = v > 0 ? G.accent : v < 0 ? G.red : G.textMuted;
-                const posH = v > 0 ? Math.max(toH(v), 2) : 0;
-                const negH = v < 0 ? Math.max(toH(v), 2) : 0;
+                const pH   = v > 0 ? Math.max(posH(v), 2) : 0;
+                const nH   = v < 0 ? Math.max(negH(v), 2) : 0;
                 const isB  = i === best  && v > 0;
                 const isW  = i === worst && v < 0;
                 const fs   = buckets.length > 8 ? 6 : 8;
@@ -1002,15 +1011,13 @@ function OverviewSection({ trades, analTf, analPeriod }) {
                     {/* Positive zone */}
                     <div style={{ height:CHART_H, display:"flex", flexDirection:"column", justifyContent:"flex-end", position:"relative" }}>
                       {v > 0 && <>
-                        {/* Value label ABOVE bar */}
-                        <div style={{ position:"absolute", bottom: posH + 4, left:"50%", transform:"translateX(-50%)",
+                        <div style={{ position:"absolute", bottom: pH + 4, left:"50%", transform:"translateX(-50%)",
                           fontSize:fs, color:labelColor, fontFamily:G.fontMono, fontWeight:400,
                           whiteSpace:"nowrap", pointerEvents:"none", zIndex:3,
                           textShadow: theme==="light" ? "none" : "0 1px 3px rgba(0,0,0,0.8)" }}>
                           {fmtShort(v)}
                         </div>
-                        {/* Bar */}
-                        <div style={{ height:posH, background:`linear-gradient(180deg,${col}ee,${col}88)`,
+                        <div style={{ height:pH, background:`linear-gradient(180deg,${col}ee,${col}88)`,
                           border:`1px solid ${col}99`, borderRadius:"4px 4px 0 0",
                           boxShadow: isB ? `0 0 14px ${col}55` : "none",
                           transition:"height 0.4s cubic-bezier(.4,0,.2,1)" }}/>
@@ -1021,13 +1028,11 @@ function OverviewSection({ trades, analTf, analPeriod }) {
                     {hasNeg && (
                       <div style={{ height:CHART_H+2, display:"flex", flexDirection:"column", justifyContent:"flex-start", position:"relative" }}>
                         {v < 0 && <>
-                          {/* Bar */}
-                          <div style={{ height:negH, background:`linear-gradient(180deg,${col}88,${col}ee)`,
+                          <div style={{ height:nH, background:`linear-gradient(180deg,${col}88,${col}ee)`,
                             border:`1px solid ${col}99`, borderRadius:"0 0 4px 4px",
                             boxShadow: isW ? `0 0 14px ${col}55` : "none",
                             transition:"height 0.4s cubic-bezier(.4,0,.2,1)" }}/>
-                          {/* Value label BELOW bar */}
-                          <div style={{ position:"absolute", top: negH + 4, left:"50%", transform:"translateX(-50%)",
+                          <div style={{ position:"absolute", top: nH + 4, left:"50%", transform:"translateX(-50%)",
                             fontSize:fs, color:labelColor, fontFamily:G.fontMono, fontWeight:400,
                             whiteSpace:"nowrap", pointerEvents:"none", zIndex:3,
                             textShadow: theme==="light" ? "none" : "0 1px 3px rgba(0,0,0,0.8)" }}>
