@@ -2272,6 +2272,7 @@ export default function App() {
   const [opError,    setOpError]   = useState(null);  // errores de CRUD
   const [mobNavOpen, setMobNavOpen] = useState(false);
   const [tradesNavDate, setTradesNavDate] = useState(() => { const n=new Date(); return {y:n.getFullYear(),m:n.getMonth()}; });
+  const [trendHovered,  setTrendHovered]  = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Close mobile nav when clicking outside
@@ -2637,9 +2638,6 @@ export default function App() {
 
         {/* ══════════ ANALYSIS ═════════════════════════════════════════════ */}
         {tab === "analisis" && (()=>{
-          // ── Executor Trend hovered state (must be at component level) ──
-          const [trendHovered, setTrendHovered] = useState(null);
-
           // ── Executor metrics ────────────────────────────────────────────
           const atExec    = analTrades.filter(t=>t.ejecutado);
           const atNonExec = analTrades.filter(t=>!t.ejecutado);
