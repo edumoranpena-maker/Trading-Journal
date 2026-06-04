@@ -2806,33 +2806,34 @@ export default function App() {
                 const allExec = trades.filter(t=>t.ejecutado);
                 const allTrades = trades;
                 const calcEff = (ts) => {
-                  const ex   = ts.filter(t=>t.ejecutado);
-                  const vne  = ts.filter(t=>!t.ejecutado && t.validez>=3);
-                  const eR   = ex.reduce((s,t)=>s+t.rr,0);
-                  const mR   = vne.reduce((s,t)=>s+t.rr,0);
-                  const tot  = eR + mR;
-                  return tot!==0 ? Math.max(0,Math.min(100,(eR/tot)*100)) : null;
+                  const valid    = ts.filter(t=>t.validez>=3).length;
+                  const executed = ts.filter(t=>t.ejecutado && t.validez>=3).length;
+                  return valid>0 ? (executed/valid)*100 : null;
                 };
+                const calcCounts = (ts) => ({
+                  valid:    ts.filter(t=>t.validez>=3).length,
+                  executed: ts.filter(t=>t.ejecutado && t.validez>=3).length,
+                });
                 if (analTf==="quarterly" && analPeriod && analPeriod.includes("-Q")) {
                   const [yr,qStr] = analPeriod.split("-Q");
                   const year=parseInt(yr), q=parseInt(qStr), sm=(q-1)*3;
                   return [0,1,2].map(i=>{
                     const mo=sm+i;
                     const ts=allTrades.filter(t=>{try{const d=parseLocalDate(t.date);return d.getFullYear()===year&&d.getMonth()===mo;}catch(e){return false;}});
-                    return {label:(MESES_ES[mo]||"").slice(0,3), eff:calcEff(ts)};
+                    return {label:(MESES_ES[mo]||"").slice(0,3), eff:calcEff(ts), ...calcCounts(ts)};
                   });
                 }
                 if (analTf==="annual" && analPeriod) {
                   const year=parseInt(analPeriod);
                   return MESES_ES.map((name,mo)=>{
                     const ts=allTrades.filter(t=>{try{const d=parseLocalDate(t.date);return d.getFullYear()===year&&d.getMonth()===mo;}catch(e){return false;}});
-                    return {label:name.slice(0,3), eff:calcEff(ts)};
+                    return {label:name.slice(0,3), eff:calcEff(ts), ...calcCounts(ts)};
                   });
                 }
                 // alltime
                 const yMap={};
                 allTrades.forEach(t=>{try{const y=parseLocalDate(t.date).getFullYear();if(!yMap[y])yMap[y]=[];yMap[y].push(t);}catch(e){}});
-                return Object.keys(yMap).sort().map(y=>({label:`${y}`,eff:calcEff(yMap[y])}));
+                return Object.keys(yMap).sort().map(y=>({label:`${y}`,eff:calcEff(yMap[y]),...calcCounts(yMap[y])}));
               })();
 
               const points   = effBuckets.filter(b=>b.eff!==null);
@@ -2855,7 +2856,8 @@ export default function App() {
               const pts = effBuckets.map((b,i)=>({
                 x: PAD + (effBuckets.length>1 ? i/(effBuckets.length-1) : 0.5) * (W-PAD*2),
                 y: b.eff!==null ? PAD + (1-(b.eff-minE)/eRange)*(H-PAD*2) : null,
-                eff: b.eff, label: b.label, i
+                eff: b.eff, label: b.label, i,
+                executed: b.executed??0, valid: b.valid??0,
               }));
 
               // Build smooth SVG path through non-null points
@@ -2920,12 +2922,11 @@ export default function App() {
                                   {/* Tooltip */}
                                   {isHov && (
                                     <g>
-                                      <rect x={p.x-28} y={p.y-28} width={56} height={20} rx={4}
+                                      <rect x={p.x-38} y={p.y-52} width={76} height={46} rx={4}
                                         fill={G.surfaceAlt} stroke={G.border} strokeWidth={1}/>
-                                      <text x={p.x} y={p.y-14} textAnchor="middle"
-                                        fontSize={8} fill={G.textPrimary} fontFamily={G.fontMono}>
-                                        {p.label} {p.eff!==null?`${p.eff.toFixed(1)}%`:"—"}
-                                      </text>
+                                      <text x={p.x} y={p.y-38} textAnchor="middle" fontSize={8} fill={G.textSec} fontFamily={G.fontDisplay}>{p.label}</text>
+                                      <text x={p.x} y={p.y-27} textAnchor="middle" fontSize={7} fill={G.textMuted} fontFamily={G.fontMono}>{`Exec: ${p.executed} / Valid: ${p.valid}`}</text>
+                                      <text x={p.x} y={p.y-14} textAnchor="middle" fontSize={8} fill={G.textPrimary} fontFamily={G.fontMono} fontWeight="600">{p.eff!==null?`${p.eff.toFixed(1)}%`:"—"}</text>
                                     </g>
                                   )}
                                 </g>
@@ -2977,7 +2978,133 @@ export default function App() {
               </div>
             </div>
 
-            {/* ── SECCIÓN 3: Performance Psicológico ── */}
+            {/* ── SECCIÓN 3: Sistema vs Ejecutor ── */}
+            {(()=>{
+              const sysT  = analTrades.filter(t=>t.validez>=3);  // all valid setups
+              const execT = analTrades.filter(t=>t.ejecutado);   // all executed trades
+
+              const calcMetrics = ts => {
+                const wins   = ts.filter(t=>getResult(t)==="Win");
+                const losses = ts.filter(t=>getResult(t)==="Loss");
+                const wl     = wins.length + losses.length;
+                const wr     = wl ? (wins.length/wl)*100 : null;
+                const allR   = ts.map(t=>t.rr);
+                const exp    = allR.length ? allR.reduce((s,v)=>s+v,0)/allR.length : null;
+                const grossW = wins.reduce((s,t)=>s+t.rr,0);
+                const grossL = Math.abs(losses.reduce((s,t)=>s+t.rr,0));
+                const pf     = grossL>0 ? grossW/grossL : grossW>0 ? Infinity : null;
+                const avgW   = wins.length   ? grossW/wins.length   : null;
+                const avgL   = losses.length ? -(Math.abs(losses.reduce((s,t)=>s+t.rr,0))/losses.length) : null;
+                // Max drawdown on R equity curve
+                let peak=0, dd=0, running=0;
+                [...ts].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(t=>{
+                  running+=t.rr; if(running>peak)peak=running;
+                  const cur=peak-running; if(cur>dd)dd=cur;
+                });
+                return { count:ts.length, wr, exp, pf, avgW, avgL, dd };
+              };
+
+              const sys  = calcMetrics(sysT);
+              const exec = calcMetrics(execT);
+
+              const fmtR  = v => v===null?"—":`${v>=0?"+":""}${v.toFixed(2)}R`;
+              const fmtPct= v => v===null?"—":`${v.toFixed(1)}%`;
+              const fmtPF = v => v===null?"—":v===Infinity?"∞":v.toFixed(2);
+              const fmtDD = v => v===null||v===0?"—":`-${v.toFixed(2)}R`;
+
+              const delta = (s,e) => {
+                if(s===null||e===null||s===Infinity||e===Infinity) return null;
+                return e-s;
+              };
+              const devIcon = d => {
+                if(d===null) return "";
+                const abs=Math.abs(d);
+                if(abs<0.05) return "→";
+                return d>0?"↑":"↓";
+              };
+              const devColor = d => {
+                if(d===null) return G.textMuted;
+                const abs=Math.abs(d);
+                if(abs<0.05) return G.textSec;
+                return d>0?G.accent:G.red;
+              };
+
+              const metrics = [
+                { label:"Trades",      sys:sys.count,  exec:exec.count,  fmtS:`${sys.count}`,  fmtE:`${exec.count}`,  d:exec.count-sys.count,  unit:"" },
+                { label:"Win Rate",    sys:sys.wr,     exec:exec.wr,     fmtS:fmtPct(sys.wr),  fmtE:fmtPct(exec.wr),  d:delta(sys.wr,exec.wr),  unit:"%" },
+                { label:"Expectancy",  sys:sys.exp,    exec:exec.exp,    fmtS:fmtR(sys.exp),   fmtE:fmtR(exec.exp),   d:delta(sys.exp,exec.exp), unit:"R" },
+                { label:"Prof. Factor",sys:sys.pf,     exec:exec.pf,     fmtS:fmtPF(sys.pf),   fmtE:fmtPF(exec.pf),   d:delta(sys.pf,exec.pf),  unit:"" },
+                { label:"Avg Win",     sys:sys.avgW,   exec:exec.avgW,   fmtS:fmtR(sys.avgW),  fmtE:fmtR(exec.avgW),  d:delta(sys.avgW,exec.avgW), unit:"R" },
+                { label:"Avg Loss",    sys:sys.avgL,   exec:exec.avgL,   fmtS:fmtR(sys.avgL),  fmtE:fmtR(exec.avgL),  d:delta(sys.avgL,exec.avgL), unit:"R" },
+                { label:"Drawdown",    sys:sys.dd,     exec:exec.dd,     fmtS:fmtDD(sys.dd),   fmtE:fmtDD(exec.dd),   d:delta(sys.dd,exec.dd),  unit:"R" },
+              ];
+
+              // Insight
+              const wrDev  = delta(sys.wr, exec.wr);
+              const expDev = delta(sys.exp, exec.exp);
+              const exRate = sys.count>0?(exec.count/sys.count)*100:null;
+              const insight = (() => {
+                if(!sysT.length) return "Sin datos suficientes para comparar sistema vs ejecutor.";
+                const deviations = [];
+                if(wrDev!==null&&Math.abs(wrDev)>5)  deviations.push(`win rate (${wrDev>0?"+":""}${wrDev.toFixed(1)}%)`);
+                if(expDev!==null&&Math.abs(expDev)>0.3) deviations.push(`expectancy (${expDev>0?"+":""}${expDev.toFixed(2)}R)`);
+                if(exRate!==null&&exRate<70) deviations.push(`ejecución baja (${exRate.toFixed(0)}% de setups válidos ejecutados)`);
+                if(!deviations.length) return "El ejecutor está siguiendo el sistema fielmente. No se detectan desviaciones significativas en la captura del edge.";
+                if(deviations.length===1) return `Se detecta una desviación en ${deviations[0]}. Monitorea esta métrica para evitar pérdida de edge.`;
+                return `Se detectan desviaciones en: ${deviations.join(", ")}. La ejecución está divergiendo del sistema — revisa tu proceso de toma de decisiones.`;
+              })();
+
+              return (<>
+              <div style={{ marginBottom:8 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
+                  <div style={{ width:3, height:18, background:`linear-gradient(180deg,${G.accent},${G.blue})`, borderRadius:2 }}/>
+                  <span style={{ fontSize:13, fontWeight:700, fontFamily:G.fontDisplay, letterSpacing:"-0.01em" }}>Sistema vs Ejecutor</span>
+                  <div style={{ flex:1, height:1, background:G.border, marginLeft:4 }}/>
+                </div>
+              </div>
+
+              {/* Column headers */}
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 60px", gap:8, marginBottom:6, paddingLeft:4, paddingRight:4 }}>
+                {["Métrica","Sistema","Ejecutor","Δ"].map((h,i)=>(
+                  <div key={h} style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase", textAlign:i>0?"center":"left" }}>{h}</div>
+                ))}
+              </div>
+
+              {/* Metric rows */}
+              <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:16 }}>
+                {metrics.map((m,i)=>{
+                  const d   = m.d;
+                  const ico = devIcon(d);
+                  const col = devColor(d);
+                  const devLabel = d===null?"—":m.label==="Trades"?`${d>0?"+":""}${d}`
+                    :m.unit==="%"?`${d>0?"+":""}${d.toFixed(1)}%`
+                    :m.unit==="R"?`${d>0?"+":""}${d.toFixed(2)}R`
+                    :`${d>0?"+":""}${d.toFixed(2)}`;
+                  return (
+                    <div key={m.label} style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 60px", gap:8, background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:8, padding:"10px 12px", alignItems:"center" }}>
+                      <div style={{ fontSize:10, color:G.textSec, fontFamily:G.fontDisplay, fontWeight:600 }}>{m.label}</div>
+                      <div style={{ fontSize:12, color:G.textPrimary, fontFamily:G.fontMono, textAlign:"center", fontWeight:600 }}>{m.fmtS}</div>
+                      <div style={{ fontSize:12, color:G.textPrimary, fontFamily:G.fontMono, textAlign:"center", fontWeight:600 }}>{m.fmtE}</div>
+                      <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:3 }}>
+                        <span style={{ fontSize:10, color:col, fontFamily:G.fontMono, whiteSpace:"nowrap" }}>{ico} {devLabel}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Insight */}
+              <div style={{ background:`${G.accent}0a`, border:`1px solid ${G.accent}30`, borderRadius:10, padding:"13px 16px", marginBottom:32, display:"flex", gap:12, alignItems:"flex-start" }}>
+                <span style={{ fontSize:15, flexShrink:0 }}>🔍</span>
+                <div>
+                  <div style={{ fontSize:9, color:G.accent, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:4 }}>Sistema Insight</div>
+                  <div style={{ fontSize:12, color:G.textPrimary, lineHeight:1.65 }}>{insight}</div>
+                </div>
+              </div>
+              </>);
+            })()}
+
+            {/* ── SECCIÓN 4: Performance Psicológico ── */}
             <div style={{ marginBottom:8 }}>
               <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
                 <div style={{ width:3, height:18, background:G.yellow, borderRadius:2 }}/>
@@ -3012,7 +3139,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* ── SECCIÓN 4: Todos los Trades ── */}
+            {/* ── SECCIÓN 5: Todos los Trades ── */}
             <div style={{ marginBottom:8 }}>
               <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
                 <div style={{ width:3, height:18, background:G.textSec, borderRadius:2 }}/>
