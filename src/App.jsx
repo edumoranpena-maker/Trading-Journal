@@ -1763,7 +1763,7 @@ function EconomicCalendar() {
 // ─── DATA EXPORT / IMPORT ────────────────────────────────────────────────────
 
 const BACKUP_VERSION = "1.0";
-const TRADE_FIELDS = ["id","date","time","pair","sesion","mercado","setup","validez","confluencias","ejecutado","capital","rr","pnl","mental","link","notas"];
+const TRADE_FIELDS = ["id","date","hora","pair","sesion","mercado","setup","validez","confluencias","ejecutado","capital","rr","pnl","estado_mental","link","notas"];
 
 function exportJSON(trades) {
   const payload = {
@@ -1881,7 +1881,7 @@ function yyyymmdd() {
 
 const DASHBOARD_FIELDS = [
   { key:"date",         label:"Date",          required:true,  hint:"YYYY-MM-DD" },
-  { key:"time",         label:"Time",          required:false, hint:"HH:MM" },
+  { key:"hora",         label:"Hora",          required:false, hint:"HH:MM" },
   { key:"pair",         label:"Pair / Asset",  required:true,  hint:"EURUSD, US30..." },
   { key:"sesion",       label:"Session",       required:false, hint:"London, New York..." },
   { key:"setup",        label:"Setup",         required:false, hint:"" },
@@ -1892,7 +1892,7 @@ const DASHBOARD_FIELDS = [
   { key:"ejecutado",    label:"Executed",      required:false, hint:"true/false or Yes/No" },
   { key:"validez",      label:"Validez",       required:false, hint:"1-4" },
   { key:"confluencias", label:"Confluencias",  required:false, hint:"" },
-  { key:"mental",       label:"Mental State",  required:false, hint:"" },
+  { key:"estado_mental", label:"Mental State",  required:false, hint:"" },
   { key:"link",         label:"Link",          required:false, hint:"" },
   { key:"notas",        label:"Notes",         required:false, hint:"" },
   { key:"__ignore__",   label:"— Ignore —",   required:false, hint:"" },
@@ -1938,7 +1938,7 @@ function applyMapping(rows, mapping) {
     return {
       id:          `imp_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
       date:        mapped.date   || "",
-      time:        mapped.time   || "",
+      hora:        mapped.hora   || mapped.time  || "",
       pair:        (mapped.pair  || "").toUpperCase(),
       sesion:      mapped.sesion ? mapSession(mapped.sesion) : "London",
       mercado:     detectMercado(mapped.pair || ""),
@@ -1949,7 +1949,7 @@ function applyMapping(rows, mapping) {
       capital:     risk,
       rr,
       pnl,
-      mental:      mapped.mental || "",
+      estado_mental: mapped.estado_mental || mapped.mental || "",
       link:        mapped.link   || "",
       notas:       mapped.notas  || "",
     };
@@ -2075,7 +2075,7 @@ function normalizeNotionRow(r) {
   return {
     id:           `notion_${r.date||""}_${r.pair||""}_${Math.random().toString(36).slice(2,7)}`,
     date:         r.date        || "",
-    time:         r.time        || "",
+    hora:         r.hora        || r.time  || "",
     pair:         (r.pair       || "").toUpperCase(),
     sesion:       mapSession(r.session || ""),
     mercado:      detectMercado(r.pair || ""),
@@ -2106,7 +2106,7 @@ function normalizeImport(rows) {
   return rows.map(r => ({
     id:          r.id          || `imp_${Date.now()}_${Math.random().toString(36).slice(2)}`,
     date:        r.date        || "",
-    time:        r.time        || "",
+    hora:        r.hora        || r.time  || "",
     pair:        r.pair        || "",
     sesion:      r.sesion      || "London",
     mercado:     r.mercado     || detectMercado(r.pair||""),
@@ -2117,7 +2117,7 @@ function normalizeImport(rows) {
     capital:     parseFloat(r.capital)  || 0,
     rr:          parseFloat(r.rr)       || 0,
     pnl:         parseFloat(r.pnl)      || 0,
-    mental:      r.mental      || "",
+    estado_mental: r.estado_mental || r.mental || "",
     link:        r.link        || "",
     notas:       r.notas       || "",
   })).filter(t => t.date);
@@ -3622,12 +3622,12 @@ export default function App() {
                         const hl = h.toLowerCase().replace(/[^a-z0-9]/g,"");
                         const match =
                           saved?.[h] ??
-                          (hl==="date"?"date":hl==="time"?"time":hl==="pair"||hl==="asset"||hl==="symbol"?"pair"
+                          (hl==="date"?"date":hl==="time"||hl==="hora"?"hora":hl==="pair"||hl==="asset"||hl==="symbol"?"pair"
                           :hl==="session"||hl==="sesion"?"sesion":hl==="setup"?"setup"
                           :hl==="result"||hl==="outcome"?"result":hl==="rr"||hl==="ratio"||hl==="riskreward"?"rr"
                           :hl==="pl"||hl==="pnl"||hl==="profit"?"pnl":hl==="risk"||hl==="capital"?"capital"
                           :hl==="executed"||hl==="ejecutado"?"ejecutado":hl==="validez"||hl==="validity"?"validez"
-                          :hl==="confluencias"||hl==="confluences"?"confluencias":hl==="mental"?"mental"
+                          :hl==="confluencias"||hl==="confluences"?"confluencias":hl==="mental"||hl==="estadomental"?"estado_mental"
                           :hl==="link"||hl==="url"?"link":hl==="notes"||hl==="notas"?"notas":"__ignore__");
                         autoMap[h] = match;
                       });
