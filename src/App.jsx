@@ -1760,6 +1760,371 @@ function EconomicCalendar() {
   );
 }
 // ─────────────────────────────────────────────────────────────────────────────
+// ─── DATA EXPORT / IMPORT ────────────────────────────────────────────────────
+
+const BACKUP_VERSION = "1.0";
+const TRADE_FIELDS = ["id","date","time","pair","sesion","mercado","setup","validez","confluencias","ejecutado","capital","rr","pnl","mental","link","notas"];
+
+function exportJSON(trades) {
+  const payload = {
+    version: BACKUP_VERSION,
+    exportedAt: new Date().toISOString(),
+    app: "PulseCore Trading Journal",
+    trades: trades.map(t => ({ ...t })),
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  dlBlob(blob, `pulsecore-backup-${yyyymmdd()}.json`);
+}
+
+function exportCSV(trades) {
+  const headers = TRADE_FIELDS;
+  const rows = trades.map(t =>
+    headers.map(f => {
+      const v = t[f];
+      if (v === null || v === undefined) return "";
+      if (Array.isArray(v)) return `"${v.join("|")}"`;
+      const s = String(v);
+      return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(",")
+  );
+  const csv = [headers.join(","), ...rows].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  dlBlob(blob, `pulsecore-trades-${yyyymmdd()}.csv`);
+}
+
+function exportXLSX(trades) {
+  // Pure JS minimal XLSX writer (SpreadsheetML / Office Open XML)
+  const headers = TRADE_FIELDS;
+  const colLetter = i => { let s=""; i++; while(i>0){const r=(i-1)%26;s=String.fromCharCode(65+r)+s;i=Math.floor((i-1)/26);}return s; };
+  const escXML = v => String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const cellStr = (col,row,val) => `<c r="${colLetter(col)}${row}" t="inlineStr"><is><t>${escXML(val)}</t></is></c>`;
+
+  let sheetData = `<row r="1">${headers.map((h,i)=>cellStr(i,1,h)).join("")}</row>`;
+  trades.forEach((t,ri) => {
+    const row = ri+2;
+    const cells = headers.map((f,ci) => {
+      const v = t[f];
+      const val = Array.isArray(v) ? v.join("|") : (v??'');
+      return cellStr(ci, row, val);
+    }).join("");
+    sheetData += `<row r="${row}">${cells}</row>`;
+  });
+
+  const sheet = `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetData}</sheetData></worksheet>`;
+  const wb    = `<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Trades" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+  const rel   = `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`;
+  const wbRel = `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
+  const ct    = `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`;
+
+  // Build ZIP using raw bytes (no external deps)
+  const files = [
+    { name:"[Content_Types].xml", data:ct },
+    { name:"_rels/.rels",         data:wbRel },
+    { name:"xl/workbook.xml",     data:wb },
+    { name:"xl/_rels/workbook.xml.rels", data:rel },
+    { name:"xl/worksheets/sheet1.xml",   data:sheet },
+  ];
+  const zip = buildZip(files);
+  const blob = new Blob([zip], { type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  dlBlob(blob, `pulsecore-trades-${yyyymmdd()}.xlsx`);
+}
+
+function buildZip(files) {
+  // Minimal ZIP64-compatible writer
+  const enc   = new TextEncoder();
+  const u8 = s => enc.encode(s);
+  const u16le = n => new Uint8Array([n&0xff,(n>>8)&0xff]);
+  const u32le = n => new Uint8Array([n&0xff,(n>>8)&0xff,(n>>16)&0xff,(n>>24)&0xff]);
+  const cat   = (...arrs) => { const t=new Uint8Array(arrs.reduce((s,a)=>s+a.length,0));let o=0;arrs.forEach(a=>{t.set(a,o);o+=a.length;});return t; };
+  const crc32 = data => {
+    let c=0xFFFFFFFF;
+    for(let i=0;i<data.length;i++){c^=data[i];for(let j=0;j<8;j++)c=c&1?(c>>>1)^0xEDB88320:(c>>>1);}
+    return (c^0xFFFFFFFF)>>>0;
+  };
+  const entries=[]; let offset=0;
+  files.forEach(f=>{
+    const name=u8(f.name); const data=u8(f.data);
+    const crc=crc32(data); const sz=data.length;
+    const lh=cat(
+      new Uint8Array([0x50,0x4B,0x03,0x04]),u16le(20),u16le(0),u16le(0),
+      u16le(0),u16le(0),u32le(crc),u32le(sz),u32le(sz),
+      u16le(name.length),u16le(0),name,data
+    );
+    entries.push({name,crc,sz,offset,lh});
+    offset+=lh.length;
+  });
+  const cdStart=offset;
+  const cds=entries.map(e=>cat(
+    new Uint8Array([0x50,0x4B,0x01,0x02]),u16le(20),u16le(20),u16le(0),u16le(0),
+    u16le(0),u16le(0),u32le(e.crc),u32le(e.sz),u32le(e.sz),
+    u16le(e.name.length),u16le(0),u16le(0),u16le(0),u16le(0),u32le(0),u32le(e.offset),e.name
+  ));
+  const cdSize=cds.reduce((s,a)=>s+a.length,0);
+  const eocd=cat(
+    new Uint8Array([0x50,0x4B,0x05,0x06]),u16le(0),u16le(0),
+    u16le(entries.length),u16le(entries.length),u32le(cdSize),u32le(cdStart),u16le(0)
+  );
+  return cat(...entries.map(e=>e.lh),...cds,eocd);
+}
+
+function dlBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a   = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 3000);
+}
+
+function yyyymmdd() {
+  const d = new Date();
+  return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}`;
+}
+
+const DASHBOARD_FIELDS = [
+  { key:"date",         label:"Date",          required:true,  hint:"YYYY-MM-DD" },
+  { key:"time",         label:"Time",          required:false, hint:"HH:MM" },
+  { key:"pair",         label:"Pair / Asset",  required:true,  hint:"EURUSD, US30..." },
+  { key:"sesion",       label:"Session",       required:false, hint:"London, New York..." },
+  { key:"setup",        label:"Setup",         required:false, hint:"" },
+  { key:"result",       label:"Result",        required:false, hint:"Win/Loss/BE/No Entry" },
+  { key:"rr",           label:"R:R",           required:false, hint:"2.5 or -1" },
+  { key:"pnl",          label:"P&L ($)",       required:false, hint:"" },
+  { key:"capital",      label:"Risk / Capital",required:false, hint:"" },
+  { key:"ejecutado",    label:"Executed",      required:false, hint:"true/false or Yes/No" },
+  { key:"validez",      label:"Validez",       required:false, hint:"1-4" },
+  { key:"confluencias", label:"Confluencias",  required:false, hint:"" },
+  { key:"mental",       label:"Mental State",  required:false, hint:"" },
+  { key:"link",         label:"Link",          required:false, hint:"" },
+  { key:"notas",        label:"Notes",         required:false, hint:"" },
+  { key:"__ignore__",   label:"— Ignore —",   required:false, hint:"" },
+];
+
+function applyMapping(rows, mapping) {
+  return rows.map(row => {
+    // Build a remapped object using the user's column assignments
+    const mapped = {};
+    Object.entries(mapping).forEach(([csvCol, dashKey]) => {
+      if (dashKey && dashKey !== "__ignore__") {
+        mapped[dashKey] = row[csvCol] ?? "";
+      }
+    });
+    // Now normalize through the standard logic
+    const result   = (mapped.result || "").trim().toLowerCase();
+    const risk     = parseFloat(mapped.capital) || 0;
+    const noEntry  = result === "no entry" || (mapped.ejecutado !== undefined
+      ? !(mapped.ejecutado === "true" || mapped.ejecutado === "1" || mapped.ejecutado?.toLowerCase() === "yes" || mapped.ejecutado === true)
+      : risk === 0 && result === "");
+    const executed = !noEntry;
+
+    const ratio = parseFloat(mapped.rr) || 0;
+    const rr = result === "loss" ? -Math.abs(ratio)
+             : result === "be"   ? 0
+             : result === "win"  ? Math.abs(ratio)
+             : ratio !== 0       ? ratio
+             : parseFloat(mapped.rr) || 0;
+
+    const pnl = parseFloat(String(mapped.pnl||"0").replace(/[^0-9.\-]/g,"")) || 0;
+
+    const setupStr = (mapped.setup || "").toLowerCase();
+    const confluencias = Array.isArray(mapped.confluencias)
+      ? mapped.confluencias
+      : (mapped.confluencias||"").split("|").filter(Boolean);
+    if (setupStr.includes("htf bias")||setupStr.includes("candle bias"))
+      if (!confluencias.includes("Candle Bias")) confluencias.push("Candle Bias");
+    if (setupStr.includes("sessions cycle")||setupStr.includes("daily cycle"))
+      if (!confluencias.includes("Daily Cycle")) confluencias.push("Daily Cycle");
+
+    const validez = mapped.validez ? (Number(mapped.validez)||3) : (Math.random()<0.5?3:4);
+
+    return {
+      id:          `imp_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
+      date:        mapped.date   || "",
+      time:        mapped.time   || "",
+      pair:        (mapped.pair  || "").toUpperCase(),
+      sesion:      mapped.sesion ? mapSession(mapped.sesion) : "London",
+      mercado:     detectMercado(mapped.pair || ""),
+      setup:       mapped.setup  || "Otro",
+      validez,
+      confluencias,
+      ejecutado:   executed,
+      capital:     risk,
+      rr,
+      pnl,
+      mental:      mapped.mental || "",
+      link:        mapped.link   || "",
+      notas:       mapped.notas  || "",
+    };
+  }).filter(t => t.date);
+}
+
+function parseImportFile(file) {
+  return new Promise((resolve, reject) => {
+    const ext = file.name.split(".").pop().toLowerCase();
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Error leyendo el archivo"));
+    if (ext === "json") {
+      reader.onload = e => {
+        try {
+          const parsed = JSON.parse(e.target.result);
+          // Support both raw array and versioned backup
+          const raw = Array.isArray(parsed) ? parsed : (parsed.trades || []);
+          if (!raw.length) return reject(new Error("El archivo JSON no contiene trades"));
+          resolve({ trades: normalizeImport(raw), source: "json" });
+        } catch { reject(new Error("JSON inválido o corrupto")); }
+      };
+      reader.readAsText(file);
+    } else if (ext === "csv") {
+      reader.onload = e => {
+        try {
+          const lines = e.target.result.trim().split("\n");
+          if (lines.length < 2) return reject(new Error("CSV sin datos"));
+          const headers = lines[0].split(",").map(h=>h.trim().replace(/^"|"$/g,""));
+          const rows = lines.slice(1).map(line => {
+            const vals = []; let cur="",inQ=false;
+            for(let i=0;i<line.length;i++){const c=line[i];if(c==='"')inQ=!inQ;else if(c===','&&!inQ){vals.push(cur);cur="";}else cur+=c;}
+            vals.push(cur);
+            const obj = {};
+            headers.forEach((h,i)=>{obj[h]=vals[i]?.replace(/^"|"$/g,"")||"";});
+            return obj;
+          });
+          // Return raw rows + headers for mapping UI
+          resolve({ raw: rows, csvHeaders: headers, source: "csv", needsMapping: true });
+        } catch { reject(new Error("CSV inválido o corrupto")); }
+      };
+      reader.readAsText(file);
+    } else if (ext === "xlsx") {
+      reader.onload = e => {
+        try {
+          // Parse SpreadsheetML XML inside the ZIP
+          const bytes = new Uint8Array(e.target.result);
+          // Find sheet1.xml in ZIP by scanning for its local file header
+          const needle = new TextEncoder().encode("xl/worksheets/sheet1.xml");
+          let pos = -1;
+          for(let i=0;i<bytes.length-needle.length;i++){
+            if(bytes[i]===0x50&&bytes[i+1]===0x4B&&bytes[i+2]===0x03&&bytes[i+3]===0x04){
+              const nl=bytes[i+26]|(bytes[i+27]<<8);
+              const el=bytes[i+28]|(bytes[i+29]<<8);
+              const nameStart=i+30; const nameEnd=nameStart+nl;
+              const fname=new TextDecoder().decode(bytes.slice(nameStart,nameEnd));
+              if(fname==="xl/worksheets/sheet1.xml"){pos=nameEnd+el;break;}
+              i=nameEnd+el-1;
+            }
+          }
+          if(pos<0) return reject(new Error("No se encontró la hoja en el archivo XLSX"));
+          // Find length of compressed data — using stored (uncompressed) method
+          let len=0; for(let i=pos;i<bytes.length;i++){if(bytes[i]===0x50&&bytes[i+1]===0x4B&&(bytes[i+2]===0x03||bytes[i+2]===0x01)){len=i-pos;break;}}
+          const xml=new TextDecoder().decode(bytes.slice(pos,pos+len));
+          const parser=new DOMParser();
+          const doc=parser.parseFromString(xml,"application/xml");
+          const rows=[...doc.querySelectorAll("row")];
+          if(!rows.length) return reject(new Error("Hoja vacía"));
+          const headers=[...rows[0].querySelectorAll("c")].map(c=>{
+            const is=c.querySelector("is t");
+            const v=c.querySelector("v");
+            return(is?.textContent||v?.textContent||"").trim();
+          });
+          const data=rows.slice(1).map(row=>{
+            const obj={};
+            [...row.querySelectorAll("c")].forEach((c,i)=>{
+              const is=c.querySelector("is t");
+              const v=c.querySelector("v");
+              obj[headers[i]]=(is?.textContent||v?.textContent||"").trim();
+            });
+            return obj;
+          }).filter(o=>Object.values(o).some(v=>v));
+          if(!data.length) return reject(new Error("No se encontraron datos en la hoja"));
+          resolve({ trades: normalizeImport(data), source: "xlsx" });
+        } catch(err){ reject(new Error("XLSX inválido: "+err.message)); }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      reject(new Error("Formato no soportado. Usa .json, .csv o .xlsx"));
+    }
+  });
+}
+
+function isNotionFormat(rows) {
+  if (!rows.length) return false;
+  const keys = Object.keys(rows[0]).map(k=>k.toLowerCase());
+  return keys.includes("session") && keys.includes("result") && keys.includes("ratio");
+}
+
+function normalizeNotionRow(r) {
+  const result    = (r.result || "").trim().toLowerCase();
+  const risk      = parseFloat(r.risk) || 0;
+  const noEntry   = result === "no entry" || risk === 0;
+  const executed  = !noEntry;
+
+  // Map result → rr sign (ratio is always positive in Notion, sign from result)
+  const ratio     = parseFloat(r.ratio) || 0;
+  const rr        = result === "loss" ? -Math.abs(ratio)
+                  : result === "be"   ? 0
+                  : result === "win"  ? Math.abs(ratio)
+                  : 0;
+
+  const pnl       = parseFloat((r["p/l"] || r["P/L"] || r.pnl || "0").toString().replace(/[^0-9.\-]/g,"")) || 0;
+
+  // Confluencias: detect HTF Bias → Candle Bias, Sessions cycle → Daily Cycle
+  const setupStr  = (r.setup || "").toLowerCase();
+  const confluencias = [];
+  if (setupStr.includes("htf bias") || setupStr.includes("candle bias"))    confluencias.push("Candle Bias");
+  if (setupStr.includes("sessions cycle") || setupStr.includes("daily cycle")) confluencias.push("Daily Cycle");
+
+  // validez: 3 or 4 randomly for all trades (executed or not)
+  const validez = Math.random() < 0.5 ? 3 : 4;
+
+  return {
+    id:           `notion_${r.date||""}_${r.pair||""}_${Math.random().toString(36).slice(2,7)}`,
+    date:         r.date        || "",
+    time:         r.time        || "",
+    pair:         (r.pair       || "").toUpperCase(),
+    sesion:       mapSession(r.session || ""),
+    mercado:      detectMercado(r.pair || ""),
+    setup:        r.setup       || "Otro",
+    validez,
+    confluencias,
+    ejecutado:    executed,
+    capital:      risk,
+    rr,
+    pnl,
+    mental:       "",
+    link:         r.link        || "",
+    notas:        "",
+  };
+}
+
+function mapSession(s) {
+  const sl = s.toLowerCase();
+  if (sl.includes("london") || sl.includes("ldn")) return "London";
+  if (sl.includes("new york") || sl.includes("ny") || sl.includes("new_york")) return "New York";
+  if (sl.includes("asian") || sl.includes("asia") || sl.includes("tokyo")) return "Asian";
+  if (sl.includes("frankfurt") || sl.includes("frank")) return "Frankfurt";
+  return "London";
+}
+
+function normalizeImport(rows) {
+  if (isNotionFormat(rows)) return rows.map(normalizeNotionRow).filter(t => t.date);
+  return rows.map(r => ({
+    id:          r.id          || `imp_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    date:        r.date        || "",
+    time:        r.time        || "",
+    pair:        r.pair        || "",
+    sesion:      r.sesion      || "London",
+    mercado:     r.mercado     || detectMercado(r.pair||""),
+    setup:       r.setup       || "Otro",
+    validez:     Number(r.validez)  || 1,
+    confluencias:Array.isArray(r.confluencias)?r.confluencias:(r.confluencias||"").split("|").filter(Boolean),
+    ejecutado:   r.ejecutado==="true"||r.ejecutado===true||r.ejecutado===1,
+    capital:     parseFloat(r.capital)  || 0,
+    rr:          parseFloat(r.rr)       || 0,
+    pnl:         parseFloat(r.pnl)      || 0,
+    mental:      r.mental      || "",
+    link:        r.link        || "",
+    notas:       r.notas       || "",
+  })).filter(t => t.date);
+}
+
+// ─── END DATA EXPORT / IMPORT ─────────────────────────────────────────────────
+
 // ─── REPORTES TAB ────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2077,7 +2442,7 @@ async function generatePDF(reportContent, reportType, periodLabel) {
 }
 
 // ─── Reportes Tab Component ───────────────────────────────────────────────────
-function ReportesTab({ trades }) {
+function ReportesTab({ trades, setExportModal, setImportModal, importFeedback, setImportFeedback }) {
   const [reportTf,     setReportTf]     = useState("monthly");
   const [reportPeriod, setReportPeriod] = useState("");
   const [selectedType, setSelectedType] = useState("metricas");
@@ -2220,6 +2585,28 @@ function ReportesTab({ trades }) {
           <div style={{ fontSize:11, color:G.textSec, lineHeight:1.6 }}>Selecciona período y tipo, luego presiona <strong style={{ color:G.accent }}>Generar Reporte</strong></div>
         </div>
       )}
+
+      {/* 4. Export / Import */}
+      <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:12, padding:20, marginTop:14 }}>
+        <div style={{ fontSize:9, color:G.textSec, letterSpacing:"0.14em", textTransform:"uppercase", fontFamily:G.fontDisplay, marginBottom:14 }}>4. Exportar / Importar Datos</div>
+        <p style={{ fontSize:11, color:G.textMuted, marginBottom:16, lineHeight:1.6 }}>Exporta todos tus trades para respaldo o migración a una cuenta autenticada. Importa datos desde una exportación previa.</p>
+        <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+          <button onClick={()=>setExportModal(true)}
+            style={{ display:"flex", alignItems:"center", gap:8, background:`${G.accent}14`, border:`1px solid ${G.accent}55`, color:G.accent, borderRadius:9, padding:"11px 20px", cursor:"pointer", fontFamily:G.fontDisplay, fontWeight:600, fontSize:12 }}>
+            ↓ Export Data
+          </button>
+          <button onClick={()=>{ setImportFeedback(null); setImportModal(true); }}
+            style={{ display:"flex", alignItems:"center", gap:8, background:`${G.blue}14`, border:`1px solid ${G.blue}55`, color:G.blue, borderRadius:9, padding:"11px 20px", cursor:"pointer", fontFamily:G.fontDisplay, fontWeight:600, fontSize:12 }}>
+            ↑ Import Data
+          </button>
+        </div>
+        {importFeedback && (
+          <div style={{ marginTop:14, padding:"10px 14px", background:importFeedback.ok?`${G.accent}12`:`${G.red}12`, border:`1px solid ${importFeedback.ok?G.accent:G.red}44`, borderRadius:8, fontSize:11, color:importFeedback.ok?G.accent:G.red, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            {importFeedback.ok?"✓":"⚠"} {importFeedback.msg}
+            <button onClick={()=>setImportFeedback(null)} style={{ background:"none", border:"none", cursor:"pointer", color:G.textMuted, fontSize:14 }}>×</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2273,6 +2660,13 @@ export default function App() {
   const [mobNavOpen, setMobNavOpen] = useState(false);
   const [tradesNavDate, setTradesNavDate] = useState(() => { const n=new Date(); return {y:n.getFullYear(),m:n.getMonth()}; });
   const [trendHovered,  setTrendHovered]  = useState(null);
+  const [exportModal,   setExportModal]   = useState(false);
+  const [importModal,   setImportModal]   = useState(false);
+  const [importConfirm, setImportConfirm] = useState(null); // { trades, source }
+  const [importFeedback,setImportFeedback]= useState(null); // { ok, msg }
+  const [importLoading, setImportLoading] = useState(false);
+  const [importMapping, setImportMapping] = useState(null); // { csvHeaders, rows, mapping, saveMapping }
+  const [savedMappings, setSavedMappings] = useState(() => { try { return JSON.parse(localStorage.getItem("pulsecore_col_mappings")||"{}"); } catch{ return {}; } });
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Close mobile nav when clicking outside
@@ -3162,9 +3556,216 @@ export default function App() {
         })()}
 
         {/* ══════════ REPORTES ═════════════════════════════════════════════ */}
-        {tab === "reportes" && <ReportesTab trades={trades}/>}
+        {tab === "reportes" && <ReportesTab trades={trades} setExportModal={setExportModal} setImportModal={setImportModal} importFeedback={importFeedback} setImportFeedback={setImportFeedback}/>}
 
       </main>
+
+      {/* ── EXPORT MODAL ── */}
+      {exportModal && (
+        <div onClick={()=>setExportModal(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:9900, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+          <div onClick={e=>e.stopPropagation()} style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:14, padding:28, width:"100%", maxWidth:380 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+              <div>
+                <div style={{ fontSize:15, fontWeight:700, fontFamily:G.fontDisplay, color:G.textPrimary, marginBottom:2 }}>Export Data</div>
+                <div style={{ fontSize:10, color:G.textSec }}>{trades.length} trades disponibles</div>
+              </div>
+              <button onClick={()=>setExportModal(false)} style={{ background:"none", border:"none", color:G.textMuted, cursor:"pointer", fontSize:18 }}>×</button>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              {[
+                { fmt:"xlsx", icon:"📊", label:"Excel (.xlsx)", sub:"Hoja de cálculo editable", col:G.accent },
+                { fmt:"csv",  icon:"📋", label:"CSV (.csv)",   sub:"Compatible con cualquier app", col:G.blue },
+                { fmt:"json", icon:"💾", label:"Backup (.json)",sub:"Respaldo completo del dashboard", col:"#a78bfa" },
+              ].map(opt=>(
+                <button key={opt.fmt} onClick={()=>{ opt.fmt==="json"?exportJSON(trades):opt.fmt==="csv"?exportCSV(trades):exportXLSX(trades); setExportModal(false); }}
+                  style={{ display:"flex", alignItems:"center", gap:14, background:`${opt.col}0e`, border:`1px solid ${opt.col}33`, borderRadius:10, padding:"14px 16px", cursor:"pointer", textAlign:"left", transition:"all 0.15s" }}>
+                  <span style={{ fontSize:24, flexShrink:0 }}>{opt.icon}</span>
+                  <div>
+                    <div style={{ fontSize:12, fontWeight:600, color:G.textPrimary, fontFamily:G.fontDisplay, marginBottom:2 }}>{opt.label}</div>
+                    <div style={{ fontSize:10, color:G.textSec }}>{opt.sub}</div>
+                  </div>
+                  <span style={{ marginLeft:"auto", color:opt.col, fontSize:14 }}>↓</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── IMPORT MODAL ── */}
+      {importModal && !importConfirm && (
+        <div onClick={()=>setImportModal(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:9900, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+          <div onClick={e=>e.stopPropagation()} style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:14, padding:28, width:"100%", maxWidth:420 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+              <div>
+                <div style={{ fontSize:15, fontWeight:700, fontFamily:G.fontDisplay, color:G.textPrimary, marginBottom:2 }}>Import Data</div>
+                <div style={{ fontSize:10, color:G.textSec }}>Soporta .xlsx, .csv, .json</div>
+              </div>
+              <button onClick={()=>setImportModal(false)} style={{ background:"none", border:"none", color:G.textMuted, cursor:"pointer", fontSize:18 }}>×</button>
+            </div>
+            <div style={{ border:`2px dashed ${G.border}`, borderRadius:10, padding:"32px 20px", textAlign:"center", marginBottom:16, position:"relative" }}>
+              <div style={{ fontSize:32, marginBottom:8 }}>📁</div>
+              <div style={{ fontSize:12, color:G.textPrimary, fontWeight:600, marginBottom:4 }}>Selecciona un archivo</div>
+              <div style={{ fontSize:10, color:G.textMuted, marginBottom:16 }}>Excel, CSV o Backup JSON</div>
+              <input type="file" accept=".xlsx,.csv,.json"
+                style={{ position:"absolute", inset:0, opacity:0, cursor:"pointer", width:"100%", height:"100%" }}
+                onChange={async e => {
+                  const file = e.target.files?.[0]; if(!file) return;
+                  setImportLoading(true);
+                  try {
+                    const result = await parseImportFile(file);
+                    if (result.needsMapping) {
+                      // Auto-detect mapping from saved or Notion heuristic
+                      const saved = savedMappings[Object.keys(result.csvHeaders).join(",")] || null;
+                      const autoMap = {};
+                      result.csvHeaders.forEach(h => {
+                        const hl = h.toLowerCase().replace(/[^a-z0-9]/g,"");
+                        const match =
+                          saved?.[h] ??
+                          (hl==="date"?"date":hl==="time"?"time":hl==="pair"||hl==="asset"||hl==="symbol"?"pair"
+                          :hl==="session"||hl==="sesion"?"sesion":hl==="setup"?"setup"
+                          :hl==="result"||hl==="outcome"?"result":hl==="rr"||hl==="ratio"||hl==="riskreward"?"rr"
+                          :hl==="pl"||hl==="pnl"||hl==="profit"?"pnl":hl==="risk"||hl==="capital"?"capital"
+                          :hl==="executed"||hl==="ejecutado"?"ejecutado":hl==="validez"||hl==="validity"?"validez"
+                          :hl==="confluencias"||hl==="confluences"?"confluencias":hl==="mental"?"mental"
+                          :hl==="link"||hl==="url"?"link":hl==="notes"||hl==="notas"?"notas":"__ignore__");
+                        autoMap[h] = match;
+                      });
+                      setImportMapping({ csvHeaders: result.csvHeaders, rows: result.raw, mapping: autoMap, saveMapping: false });
+                      setImportModal(false);
+                    } else {
+                      setImportConfirm(result);
+                    }
+                  } catch(err) {
+                    setImportFeedback({ ok:false, msg:err.message });
+                    setImportModal(false);
+                  } finally { setImportLoading(false); }
+                }}
+              />
+              {importLoading && <div style={{ fontSize:11, color:G.blue }}>Procesando...</div>}
+            </div>
+            <div style={{ fontSize:10, color:G.textMuted, lineHeight:1.6, background:`${G.blue}0a`, border:`1px solid ${G.blue}22`, borderRadius:8, padding:"10px 12px" }}>
+              ℹ Los datos importados se <strong style={{color:G.textSec}}>fusionarán</strong> con los trades existentes. Los trades con ID duplicado serán omitidos.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── COLUMN MAPPING MODAL ── */}
+      {importMapping && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:9900, display:"flex", alignItems:"center", justifyContent:"center", padding:12, overflowY:"auto" }}>
+          <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:14, width:"100%", maxWidth:520, maxHeight:"90vh", display:"flex", flexDirection:"column" }}>
+            {/* Header */}
+            <div style={{ padding:"20px 24px 16px", borderBottom:`1px solid ${G.border}`, flexShrink:0 }}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
+                <div style={{ fontSize:15, fontWeight:700, fontFamily:G.fontDisplay, color:G.textPrimary }}>Column Mapping</div>
+                <button onClick={()=>setImportMapping(null)} style={{ background:"none", border:"none", color:G.textMuted, cursor:"pointer", fontSize:18 }}>×</button>
+              </div>
+              <div style={{ fontSize:10, color:G.textSec }}>{importMapping.rows.length} filas · {importMapping.csvHeaders.length} columnas detectadas</div>
+            </div>
+
+            {/* Preview row */}
+            <div style={{ padding:"12px 24px", background:G.surfaceAlt, borderBottom:`1px solid ${G.border}`, flexShrink:0 }}>
+              <div style={{ fontSize:8, color:G.textMuted, letterSpacing:"0.12em", textTransform:"uppercase", fontFamily:G.fontDisplay, marginBottom:6 }}>Vista previa — primera fila</div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                {importMapping.csvHeaders.map(h => (
+                  <div key={h} style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:6, padding:"3px 8px" }}>
+                    <span style={{ fontSize:8, color:G.textMuted, display:"block" }}>{h}</span>
+                    <span style={{ fontSize:9, color:G.textPrimary, fontFamily:G.fontMono }}>{String(importMapping.rows[0]?.[h]||"").slice(0,18)||"—"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Mapping rows */}
+            <div style={{ overflowY:"auto", flex:1, padding:"16px 24px" }}>
+              <div style={{ fontSize:8, color:G.textMuted, letterSpacing:"0.12em", textTransform:"uppercase", fontFamily:G.fontDisplay, marginBottom:10 }}>Asigna cada columna del CSV a un campo del dashboard</div>
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {importMapping.csvHeaders.map(csvCol => (
+                  <div key={csvCol} style={{ display:"grid", gridTemplateColumns:"1fr auto 1fr", alignItems:"center", gap:10 }}>
+                    <div style={{ background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:7, padding:"8px 10px" }}>
+                      <div style={{ fontSize:10, fontWeight:600, color:G.textPrimary, fontFamily:G.fontDisplay }}>{csvCol}</div>
+                      <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontMono, marginTop:2 }}>{String(importMapping.rows[0]?.[csvCol]||"").slice(0,20)||"—"}</div>
+                    </div>
+                    <span style={{ fontSize:14, color:G.textMuted }}>→</span>
+                    <select value={importMapping.mapping[csvCol]||"__ignore__"}
+                      onChange={e => setImportMapping(m => ({ ...m, mapping: { ...m.mapping, [csvCol]: e.target.value } }))}
+                      style={{ background:G.surfaceAlt, border:`1px solid ${G.border}`, color:G.textPrimary, borderRadius:7, padding:"8px 10px", fontSize:10, fontFamily:G.fontDisplay, cursor:"pointer", appearance:"auto" }}>
+                      {DASHBOARD_FIELDS.map(f => (
+                        <option key={f.key} value={f.key}>{f.label}{f.hint?` (${f.hint})`:""}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding:"16px 24px", borderTop:`1px solid ${G.border}`, flexShrink:0 }}>
+              <label style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14, cursor:"pointer" }}>
+                <input type="checkbox" checked={importMapping.saveMapping}
+                  onChange={e => setImportMapping(m => ({ ...m, saveMapping: e.target.checked }))}/>
+                <span style={{ fontSize:11, color:G.textSec }}>Guardar este mapeo para futuros imports</span>
+              </label>
+              <div style={{ display:"flex", gap:10 }}>
+                <button onClick={()=>setImportMapping(null)}
+                  style={{ flex:1, background:"none", border:`1px solid ${G.border}`, color:G.textSec, borderRadius:8, padding:"10px 0", cursor:"pointer", fontFamily:G.fontDisplay, fontSize:12 }}>
+                  Cancelar
+                </button>
+                <button onClick={()=>{
+                  if (importMapping.saveMapping) {
+                    const key = importMapping.csvHeaders.join(",");
+                    const updated = { ...savedMappings, [key]: importMapping.mapping };
+                    setSavedMappings(updated);
+                    try { localStorage.setItem("pulsecore_col_mappings", JSON.stringify(updated)); } catch {}
+                  }
+                  const mapped = applyMapping(importMapping.rows, importMapping.mapping);
+                  setImportMapping(null);
+                  setImportConfirm({ trades: mapped, source: "csv" });
+                }}
+                  style={{ flex:2, background:G.accent, border:"none", color:G.bg, borderRadius:8, padding:"10px 0", cursor:"pointer", fontFamily:G.fontDisplay, fontWeight:700, fontSize:12 }}>
+                  Continuar →
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── IMPORT CONFIRM DIALOG ── */}
+      {importConfirm && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:9900, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+          <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:14, padding:28, width:"100%", maxWidth:400 }}>
+            <div style={{ fontSize:15, fontWeight:700, fontFamily:G.fontDisplay, color:G.textPrimary, marginBottom:6 }}>Confirmar Importación</div>
+            <div style={{ fontSize:11, color:G.textSec, marginBottom:20, lineHeight:1.6 }}>
+              Se encontraron <strong style={{color:G.textPrimary}}>{importConfirm.trades.length} trades</strong> válidos en el archivo ({importConfirm.source.toUpperCase()}).
+              Los trades con ID existente serán omitidos automáticamente.
+            </div>
+            <div style={{ background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:8, padding:"10px 14px", marginBottom:20, fontSize:10, color:G.textMuted }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}><span>Trades en archivo</span><span style={{color:G.textPrimary,fontFamily:G.fontMono}}>{importConfirm.trades.length}</span></div>
+              <div style={{ display:"flex", justifyContent:"space-between" }}><span>Trades actuales</span><span style={{color:G.textPrimary,fontFamily:G.fontMono}}>{trades.length}</span></div>
+            </div>
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={()=>setImportConfirm(null)}
+                style={{ flex:1, background:"none", border:`1px solid ${G.border}`, color:G.textSec, borderRadius:8, padding:"10px 0", cursor:"pointer", fontFamily:G.fontDisplay, fontSize:12 }}>
+                Cancelar
+              </button>
+              <button onClick={async ()=>{
+                  const existingIds = new Set(trades.map(t=>t.id));
+                  const newTrades   = importConfirm.trades.filter(t=>!existingIds.has(t.id));
+                  let ok=0, fail=0;
+                  for(const t of newTrades){ try{ await addTrade(t); ok++; }catch{ fail++; } }
+                  setImportConfirm(null);
+                  setImportModal(false);
+                  setImportFeedback({ ok:true, msg:`Importación completada: ${ok} trades añadidos${fail?`, ${fail} errores`:""}` });
+                }}
+                style={{ flex:1, background:G.accent, border:"none", color:G.bg, borderRadius:8, padding:"10px 0", cursor:"pointer", fontFamily:G.fontDisplay, fontWeight:700, fontSize:12 }}>
+                Importar {importConfirm.trades.length} trades
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
     </SettingsCtx.Provider>
   );
