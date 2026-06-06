@@ -2675,6 +2675,9 @@ export default function App() {
   const [trendHovered,  setTrendHovered]  = useState(null);
   const [seqOpen,       setSeqOpen]       = useState(false);
   const [profileInfo,   setProfileInfo]   = useState(null); // { title, formula, desc }
+  const [setupModal,    setSetupModal]    = useState(null);
+  const [confModal,     setConfModal]     = useState(null);
+  const [validezModal,  setValidezModal]  = useState(null); // { setup, wr, pnl, r, total }
   const [exportModal,   setExportModal]   = useState(false);
   const [importModal,   setImportModal]   = useState(false);
   const [importConfirm, setImportConfirm] = useState(null); // { trades, source }
@@ -3145,26 +3148,157 @@ export default function App() {
                 </div>
               );
             })()}
-            {/* Por Setup + Por Mercado */}
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
-              <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
-                <SectionHeader title={T("Por Setup")}/>
-                <GroupBars data={groupByKey(analTrades,"setup",false)} barColor={G.accent}/>
-              </div>
-              <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
-                <SectionHeader title={T("Por Mercado")}/>
-                <GroupBars data={groupByKey(analTrades,"mercado")} barColor={G.blue}/>
-              </div>
-            </div>
+            {/* Por Setup — horizontal bar chart, full width */}
+            {(()=>{
+              const sysT = analTrades.filter(t=>t.validez>=3);
+              const setupMap = {};
+              sysT.forEach(t=>{
+                const k = t.setup||"Otro";
+                if(!setupMap[k]) setupMap[k]={wins:0,losses:0,total:0,pnl:0,r:0};
+                const res = getResult(t);
+                if(res==="Win")  setupMap[k].wins++;
+                if(res==="Loss") setupMap[k].losses++;
+                setupMap[k].total++;
+                setupMap[k].pnl += t.pnl;
+                setupMap[k].r   += t.rr;
+              });
+              const rows = Object.entries(setupMap).map(([setup,d])=>{
+                const wl = d.wins+d.losses;
+                return { setup, wr: wl ? Math.round((d.wins/wl)*100) : 0, wl, ...d };
+              }).sort((a,b)=>b.wr-a.wr);
+
+              if(!rows.length) return (
+                <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12 }}>
+                  <SectionHeader title={T("Por Setup")}/>
+                  <div style={{color:G.textMuted,fontSize:11,textAlign:"center",padding:"18px 0"}}>Sin datos</div>
+                </div>
+              );
+
+              const maxWR = 100;
+              return (
+                <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12 }}>
+                  <SectionHeader title={T("Por Setup")}/>
+                  <div style={{ display:"flex", flexDirection:"column", gap:10, marginTop:8 }}>
+                    {rows.map(row=>{
+                      const col = row.wr>=60?G.accent:row.wr>=40?G.yellow:G.red;
+                      return(
+                        <button key={row.setup} onClick={()=>setSetupModal(row)}
+                          style={{ background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left", width:"100%" }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                            {/* Label */}
+                            <div style={{ width:72, flexShrink:0, fontSize:10, color:G.textSec, fontFamily:G.fontDisplay, textAlign:"right", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                              {row.setup}
+                            </div>
+                            {/* Bar track */}
+                            <div style={{ flex:1, height:20, background:G.surfaceAlt, borderRadius:4, overflow:"hidden", position:"relative" }}>
+                              <div style={{
+                                position:"absolute", left:0, top:0, bottom:0,
+                                width:`${(row.wr/maxWR)*100}%`,
+                                background:`linear-gradient(90deg,${col}99,${col}dd)`,
+                                borderRadius:4,
+                                transition:"width 0.4s cubic-bezier(.4,0,.2,1)"
+                              }}/>
+                            </div>
+                            {/* % label */}
+                            <div style={{ width:36, flexShrink:0, fontSize:11, fontWeight:700, color:col, fontFamily:G.fontMono, textAlign:"right" }}>
+                              {row.wr}%
+                            </div>
+                          </div>
+                          {/* Sub-info: trades count */}
+                          <div style={{ paddingLeft:80, fontSize:8, color:G.textMuted, fontFamily:G.fontMono, marginTop:2 }}>
+                            {row.wins}W · {row.losses}L · {row.total} trades
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
             {/* Por Confluencias + Por Validez */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
+              {/* Por Confluencias */}
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
                 <SectionHeader title={T("Por Confluencias")}/>
-                <GroupBars data={confAnalysis} barColor={G.yellow}/>
+                <div style={{ display:"flex", flexDirection:"column", gap:8, marginTop:8 }}>
+                  {(()=>{
+                    const rows = confAnalysis.map(d=>({
+                      label: d.label, wins: d.wins, losses: d.losses,
+                      total: d.total, pnl: d.pnl, r: d.r,
+                      wr: (d.wins+d.losses)>0 ? Math.round((d.wins/(d.wins+d.losses))*100) : 0
+                    })).sort((a,b)=>b.wr-a.wr);
+                    if(!rows.length) return <div style={{color:G.textMuted,fontSize:10,textAlign:"center"}}>Sin datos</div>;
+                    return rows.map(row=>{
+                      const col = row.wr>=60?G.accent:row.wr>=40?G.yellow:G.red;
+                      return(
+                        <button key={row.label} onClick={()=>setConfModal(row)}
+                          style={{ background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left", width:"100%" }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                            <div style={{ width:48, flexShrink:0, fontSize:8, color:G.textSec, fontFamily:G.fontDisplay, textAlign:"right", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                              {row.label}
+                            </div>
+                            <div style={{ flex:1, height:16, background:G.surfaceAlt, borderRadius:3, overflow:"hidden", position:"relative" }}>
+                              <div style={{ position:"absolute", left:0, top:0, bottom:0, width:`${row.wr}%`, background:`linear-gradient(90deg,${col}99,${col}dd)`, borderRadius:3, transition:"width 0.4s cubic-bezier(.4,0,.2,1)" }}/>
+                            </div>
+                            <div style={{ width:30, flexShrink:0, fontSize:10, fontWeight:700, color:col, fontFamily:G.fontMono, textAlign:"right" }}>
+                              {row.wr}%
+                            </div>
+                          </div>
+                          <div style={{ paddingLeft:54, fontSize:7, color:G.textMuted, fontFamily:G.fontMono, marginTop:1 }}>
+                            {row.wins}W · {row.losses}L
+                          </div>
+                        </button>
+                      );
+                    });
+                  })()}
+                </div>
               </div>
+
+              {/* Por Validez */}
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
                 <SectionHeader title={T("Por Validez")}/>
-                <GroupBars data={validAnalysis.map(d=>({...d,label:`${T("Validez")} ${d.n}`}))} barColor={G.blue}/>
+                <div style={{ display:"flex", flexDirection:"column", gap:8, marginTop:8 }}>
+                  {(()=>{
+                    const sysT = analTrades.filter(t=>t.validez>=3);
+                    const valMap = {};
+                    sysT.forEach(t=>{
+                      const k = t.validez||1;
+                      if(!valMap[k]) valMap[k]={wins:0,losses:0,total:0,pnl:0,r:0};
+                      const res = getResult(t);
+                      if(res==="Win")  valMap[k].wins++;
+                      if(res==="Loss") valMap[k].losses++;
+                      valMap[k].total++; valMap[k].pnl+=t.pnl; valMap[k].r+=t.rr;
+                    });
+                    const rows = Object.entries(valMap).map(([n,d])=>({
+                      label:`V${n}`, n:parseInt(n), wins:d.wins, losses:d.losses,
+                      total:d.total, pnl:d.pnl, r:d.r,
+                      wr:(d.wins+d.losses)>0?Math.round((d.wins/(d.wins+d.losses))*100):0
+                    })).sort((a,b)=>b.wr-a.wr);
+                    if(!rows.length) return <div style={{color:G.textMuted,fontSize:10,textAlign:"center"}}>Sin datos</div>;
+                    return rows.map(row=>{
+                      const col = row.wr>=60?G.accent:row.wr>=40?G.yellow:G.red;
+                      return(
+                        <button key={row.label} onClick={()=>setValidezModal(row)}
+                          style={{ background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left", width:"100%" }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                            <div style={{ width:48, flexShrink:0, fontSize:8, color:G.textSec, fontFamily:G.fontDisplay, textAlign:"right", whiteSpace:"nowrap" }}>
+                              {row.label}
+                            </div>
+                            <div style={{ flex:1, height:16, background:G.surfaceAlt, borderRadius:3, overflow:"hidden", position:"relative" }}>
+                              <div style={{ position:"absolute", left:0, top:0, bottom:0, width:`${row.wr}%`, background:`linear-gradient(90deg,${col}99,${col}dd)`, borderRadius:3, transition:"width 0.4s cubic-bezier(.4,0,.2,1)" }}/>
+                            </div>
+                            <div style={{ width:30, flexShrink:0, fontSize:10, fontWeight:700, color:col, fontFamily:G.fontMono, textAlign:"right" }}>
+                              {row.wr}%
+                            </div>
+                          </div>
+                          <div style={{ paddingLeft:54, fontSize:7, color:G.textMuted, fontFamily:G.fontMono, marginTop:1 }}>
+                            {row.wins}W · {row.losses}L
+                          </div>
+                        </button>
+                      );
+                    });
+                  })()}
+                </div>
               </div>
             </div>
             {/* Mejor / Peor */}
@@ -3685,6 +3819,89 @@ export default function App() {
         {tab === "reportes" && <ReportesTab trades={trades} setExportModal={setExportModal} setImportModal={setImportModal} importFeedback={importFeedback} setImportFeedback={setImportFeedback}/>}
 
       </main>
+
+      {/* ── SETUP DETAIL MODAL ── */}
+      {setupModal && (
+        <div onClick={()=>setSetupModal(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:9900, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+          <div onClick={e=>e.stopPropagation()} style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:12, padding:24, width:"100%", maxWidth:300 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+              <span style={{ fontSize:14, fontWeight:700, fontFamily:G.fontDisplay, color:G.textPrimary }}>{setupModal.setup}</span>
+              <button onClick={()=>setSetupModal(null)} style={{ background:"none", border:"none", color:G.textMuted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>
+            </div>
+            {/* Win Rate big */}
+            <div style={{ textAlign:"center", marginBottom:16, padding:"12px 0", background:G.surfaceAlt, borderRadius:9 }}>
+              <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:4 }}>Win Rate</div>
+              <div style={{ fontSize:36, fontWeight:800, fontFamily:G.fontUI, letterSpacing:"-0.04em", color:setupModal.wr>=60?G.accent:setupModal.wr>=40?G.yellow:G.red }}>
+                {setupModal.wr}%
+              </div>
+              <div style={{ fontSize:10, color:G.textMuted, marginTop:2 }}>{setupModal.wins}W · {setupModal.losses}L</div>
+            </div>
+            {/* Stats */}
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {[
+                { label:"Total Trades", val:`${setupModal.total}`, col:G.textPrimary },
+                { label:"Profit / Loss", val:`${setupModal.pnl>=0?"+":""}$${setupModal.pnl.toFixed(0)}`, col:pColor(setupModal.pnl) },
+                { label:"Total R", val:`${setupModal.r>=0?"+":""}${setupModal.r.toFixed(2)}R`, col:pColor(setupModal.r) },
+              ].map(s=>(
+                <div key={s.label} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:`1px solid ${G.border}` }}>
+                  <span style={{ fontSize:11, color:G.textSec, fontFamily:G.fontDisplay }}>{s.label}</span>
+                  <span style={{ fontSize:13, fontWeight:600, color:s.col, fontFamily:G.fontMono }}>{s.val}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── CONFLUENCIA DETAIL MODAL ── */}
+      {confModal && (
+        <div onClick={()=>setConfModal(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:9900, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+          <div onClick={e=>e.stopPropagation()} style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:12, padding:24, width:"100%", maxWidth:300 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+              <span style={{ fontSize:14, fontWeight:700, fontFamily:G.fontDisplay, color:G.textPrimary }}>{confModal.label}</span>
+              <button onClick={()=>setConfModal(null)} style={{ background:"none", border:"none", color:G.textMuted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>
+            </div>
+            <div style={{ textAlign:"center", marginBottom:16, padding:"12px 0", background:G.surfaceAlt, borderRadius:9 }}>
+              <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:4 }}>Win Rate</div>
+              <div style={{ fontSize:36, fontWeight:800, fontFamily:G.fontUI, letterSpacing:"-0.04em", color:confModal.wr>=60?G.accent:confModal.wr>=40?G.yellow:G.red }}>{confModal.wr}%</div>
+              <div style={{ fontSize:10, color:G.textMuted, marginTop:2 }}>{confModal.wins}W · {confModal.losses}L</div>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
+              {[{label:"Total Trades",val:`${confModal.total}`,col:G.textPrimary},{label:"Profit / Loss",val:`${confModal.pnl>=0?"+":""}$${confModal.pnl.toFixed(0)}`,col:pColor(confModal.pnl)},{label:"Total R",val:`${confModal.r>=0?"+":""}${confModal.r.toFixed(2)}R`,col:pColor(confModal.r)}].map(s=>(
+                <div key={s.label} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:`1px solid ${G.border}` }}>
+                  <span style={{ fontSize:11, color:G.textSec, fontFamily:G.fontDisplay }}>{s.label}</span>
+                  <span style={{ fontSize:13, fontWeight:600, color:s.col, fontFamily:G.fontMono }}>{s.val}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── VALIDEZ DETAIL MODAL ── */}
+      {validezModal && (
+        <div onClick={()=>setValidezModal(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:9900, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+          <div onClick={e=>e.stopPropagation()} style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:12, padding:24, width:"100%", maxWidth:300 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+              <span style={{ fontSize:14, fontWeight:700, fontFamily:G.fontDisplay, color:G.textPrimary }}>Validez {validezModal.n}</span>
+              <button onClick={()=>setValidezModal(null)} style={{ background:"none", border:"none", color:G.textMuted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>
+            </div>
+            <div style={{ textAlign:"center", marginBottom:16, padding:"12px 0", background:G.surfaceAlt, borderRadius:9 }}>
+              <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:4 }}>Win Rate</div>
+              <div style={{ fontSize:36, fontWeight:800, fontFamily:G.fontUI, letterSpacing:"-0.04em", color:validezModal.wr>=60?G.accent:validezModal.wr>=40?G.yellow:G.red }}>{validezModal.wr}%</div>
+              <div style={{ fontSize:10, color:G.textMuted, marginTop:2 }}>{validezModal.wins}W · {validezModal.losses}L</div>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
+              {[{label:"Total Trades",val:`${validezModal.total}`,col:G.textPrimary},{label:"Profit / Loss",val:`${validezModal.pnl>=0?"+":""}$${validezModal.pnl.toFixed(0)}`,col:pColor(validezModal.pnl)},{label:"Total R",val:`${validezModal.r>=0?"+":""}${validezModal.r.toFixed(2)}R`,col:pColor(validezModal.r)}].map(s=>(
+                <div key={s.label} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:`1px solid ${G.border}` }}>
+                  <span style={{ fontSize:11, color:G.textSec, fontFamily:G.fontDisplay }}>{s.label}</span>
+                  <span style={{ fontSize:13, fontWeight:600, color:s.col, fontFamily:G.fontMono }}>{s.val}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── EXECUTOR PROFILE INFO MODAL ── */}
       {profileInfo && (
