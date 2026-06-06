@@ -3223,10 +3223,29 @@ export default function App() {
               );
             })()}
 
-            {/* Row 1: Execution Efficiency + Execution Rate */}
+            {/* Row 1: Execution Rate + Execution Efficiency */}
             <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:12, marginBottom:12 }}>
 
-              {/* Execution Efficiency */}
+              {/* Execution Rate (donut) — LEFT */}
+              <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:12 }}>
+                <SectionHeader title={T("Execution Rate")}/>
+                {(()=>{
+                  const analExecCount    = analTrades.filter(t=>t.ejecutado).length;
+                  const analNonExecCount = analTrades.filter(t=>!t.ejecutado).length;
+                  const analExecRate     = analTrades.length>0?((analExecCount/analTrades.length)*100).toFixed(1):"0.0";
+                  return(
+                    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10, flex:1, justifyContent:"center" }}>
+                      <DonutChart exec={analExecCount} nonExec={analNonExecCount}/>
+                      <div style={{ fontSize:10, color:G.textSec, textAlign:"center", lineHeight:1.5 }}>
+                        <span style={{ color:execEffCol, fontWeight:700, fontSize:13 }}>{analExecRate}%</span>
+                        {" "}{T("setups vistos ejecutados en el período")}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Execution Efficiency — RIGHT */}
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:12 }}>
                 <SectionHeader title="Execution Efficiency"/>
                 <div style={{ fontSize:36, fontWeight:800, fontFamily:G.fontUI, color:execEffCol, lineHeight:1, letterSpacing:"-0.04em" }}>
@@ -3251,25 +3270,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Execution Rate (donut) */}
-              <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:12 }}>
-                <SectionHeader title={T("Execution Rate")}/>
-                {(()=>{
-                  const analExecCount    = analTrades.filter(t=>t.ejecutado).length;
-                  const analNonExecCount = analTrades.filter(t=>!t.ejecutado).length;
-                  const analExecRate     = analTrades.length>0?((analExecCount/analTrades.length)*100).toFixed(1):"0.0";
-                  return(
-                    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10, flex:1, justifyContent:"center" }}>
-                      <DonutChart exec={analExecCount} nonExec={analNonExecCount}/>
-                      <div style={{ fontSize:10, color:G.textSec, textAlign:"center", lineHeight:1.5 }}>
-                        <span style={{ color:execEffCol, fontWeight:700, fontSize:13 }}>{analExecRate}%</span>
-                        {" "}{T("setups vistos ejecutados en el período")}
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-
             </div>
 
             {/* Row 2: Cost of Inaction + Cost of Overtrading */}
@@ -3278,7 +3278,7 @@ export default function App() {
               {/* Cost of Inaction */}
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:12 }}>
                 <SectionHeader title="Cost of Inaction"/>
-                <div style={{ fontSize:32, fontWeight:800, fontFamily:G.fontUI, color:pColor(coiR), lineHeight:1, letterSpacing:"-0.04em" }}>
+                <div style={{ fontSize:32, fontWeight:800, fontFamily:G.fontUI, color:coiR>0?G.red:coiR<0?G.accent:G.textMuted, lineHeight:1, letterSpacing:"-0.04em" }}>
                   {coiR>0?`+${coiR.toFixed(2)}R Perdidos`:coiR<0?`${coiR.toFixed(2)}R Ahorrados`:"0.00R"}
                 </div>
                 <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:4 }}>
@@ -3369,12 +3369,12 @@ export default function App() {
                 { key:"trust",       label:"Trust",       score:trust,       color:G.accent,
                   title:"Trust", formula:"Executed Valid Setups / Total Valid Setups × 100",
                   desc:"Measures how often the trader trusts and acts on valid opportunities instead of skipping them." },
-                { key:"risk",        label:"Risk",        score:risk,        color:"#a78bfa",
-                  title:"Risk Adherence", formula:"Valid Setups (risk-compliant) / Total Trades × 100",
-                  desc:"Measures adherence to risk management rules. Valid setups represent correct risk behavior." },
                 { key:"consistency", label:"Consistency", score:consistency, color:G.yellow,
                   title:"Consistency", formula:"(Post-Win Stability + Post-Loss Stability) / 2 × 100",
                   desc:"Measures whether recent results affect execution. High = stable behavior after wins and losses. Low = hesitation, revenge trading, or overconfidence." },
+                { key:"risk",        label:"Risk",        score:risk,        color:"#a78bfa",
+                  title:"Risk Adherence", formula:"Valid Setups (risk-compliant) / Total Trades × 100",
+                  desc:"Measures adherence to risk management rules. Valid setups represent correct risk behavior." },
               ];
 
               // Radar SVG
@@ -3391,71 +3391,60 @@ export default function App() {
               return (
                 <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12 }}>
                   <SectionHeader title="Executor Profile"/>
-                  <div style={{ display:"flex", gap:20, flexWrap:"wrap", alignItems:"center" }}>
-
-                    {/* Radar */}
-                    <div style={{ flexShrink:0 }}>
-                      <svg width={160} height={160} viewBox="0 0 160 160">
-                        {/* Ring lines */}
-                        {rings.map(pct=>(
-                          <polygon key={pct}
-                            points={metrics.map((_,i)=>{ const p=pt(i,(pct/100)*R); return `${p.x},${p.y}`; }).join(" ")}
-                            fill="none" stroke={G.border} strokeWidth={pct===100?1.5:0.8}
-                            strokeDasharray={pct===100?"none":"3,3"}/>
-                        ))}
-                        {/* Axis lines */}
-                        {metrics.map((_,i)=>{
-                          const outer=pt(i,R);
-                          return <line key={i} x1={CX} y1={CY} x2={outer.x} y2={outer.y} stroke={G.border} strokeWidth={0.8}/>;
-                        })}
-                        {/* Data polygon */}
-                        <polygon points={poly} fill={`${G.blue}28`} stroke={G.blue} strokeWidth={2} strokeLinejoin="round"/>
-                        {/* Data points */}
-                        {polyPts.map((p,i)=>(
-                          <circle key={i} cx={p.x} cy={p.y} r={3.5}
-                            fill={metrics[i].color} stroke={G.surface} strokeWidth={1.5}/>
-                        ))}
-                        {/* Axis labels */}
-                        {metrics.map((m,i)=>{
-                          const lp=pt(i,R+14);
-                          return(
-                            <text key={i} x={lp.x} y={lp.y+3} textAnchor="middle"
-                              fontSize={7.5} fill={G.textSec} fontFamily={G.fontDisplay}
-                              fontWeight="600">{m.label}</text>
-                          );
-                        })}
-                        {/* Ring % labels */}
-                        {[50,100].map(pct=>(
-                          <text key={pct} x={CX+2} y={CY-(pct/100)*R+3}
-                            fontSize={5.5} fill={G.textMuted} fontFamily={G.fontMono} textAnchor="middle">
-                            {pct}
-                          </text>
-                        ))}
-                      </svg>
-                    </div>
-
-                    {/* Metrics list */}
-                    <div style={{ flex:1, minWidth:160, display:"flex", flexDirection:"column", gap:10 }}>
-                      {metrics.map(m=>(
-                        <div key={m.key} style={{ display:"flex", alignItems:"center", gap:10 }}>
-                          <div style={{ width:3, height:28, borderRadius:2, background:m.color, flexShrink:0 }}/>
-                          <div style={{ flex:1 }}>
-                            <div style={{ display:"flex", alignItems:"center", gap:4, marginBottom:3 }}>
-                              <span style={{ fontSize:10, fontWeight:600, color:G.textPrimary, fontFamily:G.fontDisplay }}>{m.label}</span>
-                              <button onClick={()=>setProfileInfo(m)}
-                                style={{ background:"none", border:"none", cursor:"pointer", fontSize:10, color:G.textMuted, padding:0, lineHeight:1, flexShrink:0 }}>ℹ️</button>
-                            </div>
-                            {/* Progress bar */}
-                            <div style={{ height:5, background:G.surfaceAlt, borderRadius:3, overflow:"hidden" }}>
-                              <div style={{ height:"100%", width:`${m.score}%`, background:m.color, borderRadius:3, transition:"width 0.5s cubic-bezier(.4,0,.2,1)" }}/>
-                            </div>
+                  {/* Radar centered */}
+                  <div style={{ display:"flex", justifyContent:"center", marginBottom:16 }}>
+                    <svg width={160} height={160} viewBox="0 0 160 160">
+                      {rings.map(pct=>(
+                        <polygon key={pct}
+                          points={metrics.map((_,i)=>{ const p=pt(i,(pct/100)*R); return `${p.x},${p.y}`; }).join(" ")}
+                          fill="none" stroke={G.border} strokeWidth={pct===100?1.5:0.8}
+                          strokeDasharray={pct===100?"none":"3,3"}/>
+                      ))}
+                      {metrics.map((_,i)=>{
+                        const outer=pt(i,R);
+                        return <line key={i} x1={CX} y1={CY} x2={outer.x} y2={outer.y} stroke={G.border} strokeWidth={0.8}/>;
+                      })}
+                      <polygon points={poly} fill={`${G.blue}28`} stroke={G.blue} strokeWidth={2} strokeLinejoin="round"/>
+                      {polyPts.map((p,i)=>(
+                        <circle key={i} cx={p.x} cy={p.y} r={3.5}
+                          fill={metrics[i].color} stroke={G.surface} strokeWidth={1.5}/>
+                      ))}
+                      {metrics.map((m,i)=>{
+                        const lp=pt(i,R+14);
+                        return(
+                          <text key={i} x={lp.x} y={lp.y+3} textAnchor="middle"
+                            fontSize={7.5} fill={G.textSec} fontFamily={G.fontDisplay}
+                            fontWeight="600">{m.label}</text>
+                        );
+                      })}
+                      {[50,100].map(pct=>(
+                        <text key={pct} x={CX+2} y={CY-(pct/100)*R+3}
+                          fontSize={5.5} fill={G.textMuted} fontFamily={G.fontMono} textAnchor="middle">
+                          {pct}
+                        </text>
+                      ))}
+                    </svg>
+                  </div>
+                  {/* Metrics list below */}
+                  <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                    {metrics.map(m=>(
+                      <div key={m.key} style={{ display:"flex", alignItems:"center", gap:10 }}>
+                        <div style={{ width:3, height:28, borderRadius:2, background:m.color, flexShrink:0 }}/>
+                        <div style={{ flex:1 }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:4, marginBottom:3 }}>
+                            <span style={{ fontSize:10, fontWeight:600, color:G.textPrimary, fontFamily:G.fontDisplay }}>{m.label}</span>
+                            <button onClick={()=>setProfileInfo(m)}
+                              style={{ background:"none", border:"none", cursor:"pointer", fontSize:10, color:G.textMuted, padding:0, lineHeight:1, flexShrink:0 }}>ℹ️</button>
                           </div>
-                          <div style={{ fontSize:15, fontWeight:700, color:m.color, fontFamily:G.fontUI, letterSpacing:"-0.02em", minWidth:36, textAlign:"right" }}>
-                            {m.score}%
+                          <div style={{ height:5, background:G.surfaceAlt, borderRadius:3, overflow:"hidden" }}>
+                            <div style={{ height:"100%", width:`${m.score}%`, background:m.color, borderRadius:3, transition:"width 0.5s cubic-bezier(.4,0,.2,1)" }}/>
                           </div>
                         </div>
-                      ))}
-                    </div>
+                        <div style={{ fontSize:15, fontWeight:700, color:m.color, fontFamily:G.fontUI, letterSpacing:"-0.02em", minWidth:36, textAlign:"right" }}>
+                          {m.score}%
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               );
@@ -3514,10 +3503,12 @@ export default function App() {
                 if(abs<0.05) return "→";
                 return d>0?"↑":"↓";
               };
-              const devColor = d => {
+              const devColor = (d, label) => {
                 if(d===null) return G.textMuted;
                 const abs=Math.abs(d);
                 if(abs<0.05) return G.textSec;
+                // For Drawdown, lower executor value (negative delta) is better → green
+                if(label==="Drawdown") return d<0?G.accent:G.red;
                 return d>0?G.accent:G.red;
               };
 
@@ -3567,7 +3558,7 @@ export default function App() {
                 {metrics.map((m,i)=>{
                   const d   = m.d;
                   const ico = devIcon(d);
-                  const col = devColor(d);
+                  const col = devColor(d, m.label);
                   const devLabel = d===null?"—":m.label==="Trades"?`${d>0?"+":""}${d}`
                     :m.unit==="%"?`${d>0?"+":""}${d.toFixed(1)}%`
                     :m.unit==="R"?`${d>0?"+":""}${d.toFixed(2)}R`
