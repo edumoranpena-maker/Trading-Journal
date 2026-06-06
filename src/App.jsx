@@ -1765,12 +1765,26 @@ function EconomicCalendar() {
 const BACKUP_VERSION = "1.0";
 const TRADE_FIELDS = ["id","date","hora","pair","sesion","mercado","setup","validez","confluencias","ejecutado","capital","rr","pnl","estado_mental","link","notas"];
 
+// Some fields may come from Supabase with different column names — resolve the actual value
+function resolveField(t, field) {
+  if (field === "hora")         return t.hora ?? t.time ?? t.hour ?? "";
+  if (field === "estado_mental")return t.estado_mental ?? t.mental ?? t.mental_state ?? t.estado ?? "";
+  if (field === "confluencias") return Array.isArray(t.confluencias) ? t.confluencias.join("|") : (t.confluencias ?? "");
+  if (field === "ejecutado")    return t.ejecutado ?? t.executed ?? false;
+  return t[field] ?? "";
+}
+
 function exportJSON(trades) {
   const payload = {
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
     app: "PulseCore Trading Journal",
-    trades: trades.map(t => ({ ...t })),
+    trades: trades.map(t => ({
+      ...t,
+      hora:          resolveField(t, "hora"),
+      estado_mental: resolveField(t, "estado_mental"),
+      confluencias:  resolveField(t, "confluencias"),
+    })),
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   dlBlob(blob, `pulsecore-backup-${yyyymmdd()}.json`);
@@ -1780,7 +1794,7 @@ function exportCSV(trades) {
   const headers = TRADE_FIELDS;
   const rows = trades.map(t =>
     headers.map(f => {
-      const v = t[f];
+      const v = resolveField(t, f);
       if (v === null || v === undefined) return "";
       if (Array.isArray(v)) return `"${v.join("|")}"`;
       const s = String(v);
@@ -1793,7 +1807,6 @@ function exportCSV(trades) {
 }
 
 function exportXLSX(trades) {
-  // Pure JS minimal XLSX writer (SpreadsheetML / Office Open XML)
   const headers = TRADE_FIELDS;
   const colLetter = i => { let s=""; i++; while(i>0){const r=(i-1)%26;s=String.fromCharCode(65+r)+s;i=Math.floor((i-1)/26);}return s; };
   const escXML = v => String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -1803,7 +1816,7 @@ function exportXLSX(trades) {
   trades.forEach((t,ri) => {
     const row = ri+2;
     const cells = headers.map((f,ci) => {
-      const v = t[f];
+      const v = resolveField(t, f);
       const val = Array.isArray(v) ? v.join("|") : (v??'');
       return cellStr(ci, row, val);
     }).join("");
@@ -2660,6 +2673,7 @@ export default function App() {
   const [mobNavOpen, setMobNavOpen] = useState(false);
   const [tradesNavDate, setTradesNavDate] = useState(() => { const n=new Date(); return {y:n.getFullYear(),m:n.getMonth()}; });
   const [trendHovered,  setTrendHovered]  = useState(null);
+  const [seqOpen,       setSeqOpen]       = useState(false);
   const [exportModal,   setExportModal]   = useState(false);
   const [importModal,   setImportModal]   = useState(false);
   const [importConfirm, setImportConfirm] = useState(null); // { trades, source }
@@ -2936,13 +2950,6 @@ export default function App() {
               <Sparkline trades={filteredTrades} H={150}/>
               <div style={{ display:"flex", justifyContent:"space-between", marginTop:8, fontSize:10, color:G.textSec }}><span>{T("inicio del período")}</span><span style={{color:pColor(stats.totalPnl)}}>{fmtD(stats.totalPnl)} · {fmtR(stats.totalR)}</span></div>
             </div>
-            <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12 }}>
-              <SectionHeader title={T("Execution Rate")}/>
-              <div style={{ display:"flex", alignItems:"center", gap:32 }}>
-                <DonutChart exec={stats.execCount} nonExec={stats.nonExecCount}/>
-                <div style={{ fontSize:10, color:G.textSec }}>{stats.execRate}% {T("setups vistos ejecutados en el período")}</div>
-              </div>
-            </div>
             <div style={{ marginBottom:12 }}>{(()=>{let seqYear,seqMonth;if(tf==="monthly"&&tfPeriod){const[yr,mo]=tfPeriod.split("-").map(Number);seqYear=yr;seqMonth=mo;}else if(tf==="weekly"&&tfPeriod){const d=new Date(tfPeriod);seqYear=d.getFullYear();seqMonth=d.getMonth();}else if(tf==="quarterly"&&tfPeriod){const[yr,qStr]=tfPeriod.split("-Q");seqYear=parseInt(yr);seqMonth=(parseInt(qStr)-1)*3;}else{const sorted=[...filteredTrades].sort((a,b)=>new Date(b.date)-new Date(a.date));const latest=sorted.length?new Date(sorted[0].date):new Date("2026-05-07");seqYear=latest.getFullYear();seqMonth=latest.getMonth();}return<ExecSequence trades={filteredTrades} year={seqYear} month={seqMonth}/>;})()}</div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
@@ -3056,6 +3063,16 @@ export default function App() {
           const coiBigWin   = coiWinners.length?Math.max(...coiWinners.map(t=>t.rr)):null;
           const coiBigLoss  = coiLosers.length?Math.min(...coiLosers.map(t=>t.rr)):null;
 
+          // Cost of Overtrading — all invalid trades executed
+          const cotTrades   = atExec.filter(t=>t.validez<3);
+          const cotR        = cotTrades.reduce((s,t)=>s+t.rr,0);
+          const cotCount    = cotTrades.length;
+          const cotAvg      = cotCount>0?(cotR/cotCount).toFixed(2):"0.00";
+          const cotWinners  = cotTrades.filter(t=>t.rr>0);
+          const cotLosers   = cotTrades.filter(t=>t.rr<0);
+          const cotBigWin   = cotWinners.length?Math.max(...cotWinners.map(t=>t.rr)):null;
+          const cotBigLoss  = cotLosers.length?Math.min(...cotLosers.map(t=>t.rr)):null;
+
           // Trust Deviation Index
           const totalValid  = atValid.length;
           const tdi = totalValid>0?((1-(atValidExec.length/totalValid))*100):null;
@@ -3093,6 +3110,40 @@ export default function App() {
                 <div style={{ flex:1, height:1, background:G.border, marginLeft:4 }}/>
               </div>
             </div>
+            {/* Sistema KPI cards 2×3 */}
+            {(()=>{
+              const sT   = analTrades.filter(t=>t.validez>=3);
+              const sW   = sT.filter(t=>getResult(t)==="Win");
+              const sL   = sT.filter(t=>getResult(t)==="Loss");
+              const sWL  = sW.length+sL.length;
+              const sWR  = sWL ? ((sW.length/sWL)*100).toFixed(1) : null;
+              const sGW  = sW.reduce((s,t)=>s+t.rr,0);
+              const sGL  = Math.abs(sL.reduce((s,t)=>s+t.rr,0));
+              const sPF  = sGL>0 ? (sGW/sGL).toFixed(2) : sGW>0?"∞":null;
+              const sExp = sT.length ? (sT.reduce((s,t)=>s+t.rr,0)/sT.length).toFixed(2) : null;
+              const sAvgW= sW.length ? (sGW/sW.length).toFixed(2) : null;
+              const sAvgL= sL.length ? (-(sGL/sL.length)).toFixed(2) : null;
+              let sPeak=0,sDD=0,sRun=0;
+              [...sT].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(t=>{sRun+=t.rr;if(sRun>sPeak)sPeak=sRun;const d=sPeak-sRun;if(d>sDD)sDD=d;});
+              const cards=[
+                {label:"Win Rate",    val:sWR!==null?`${sWR}%`:"—",   col:sWR!==null?parseFloat(sWR)>=50?G.accent:G.red:G.textMuted},
+                {label:"Prof. Factor",val:sPF??   "—",                col:sPF&&sPF!=="—"&&parseFloat(sPF)>=1?G.accent:G.red},
+                {label:"Val. Esperado",val:sExp!==null?`${sExp>0?"+":""}${sExp}R`:"—", col:sExp!==null?pColor(parseFloat(sExp)):G.textMuted},
+                {label:"Avg Loss",    val:sAvgL!==null?`${sAvgL}R`:"—", col:G.red},
+                {label:"Avg Win",     val:sAvgW!==null?`+${sAvgW}R`:"—", col:G.accent},
+                {label:"Drawdown",    val:sDD>0?`-${sDD.toFixed(2)}R`:"—", col:sDD>0?G.red:G.textMuted},
+              ];
+              return(
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
+                  {cards.map(c=>(
+                    <div key={c.label} style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:9, padding:"12px 14px" }}>
+                      <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:6 }}>{c.label}</div>
+                      <div style={{ fontSize:20, fontWeight:700, color:c.col, fontFamily:G.fontUI, letterSpacing:"-0.03em", lineHeight:1 }}>{c.val}</div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
             {/* Por Setup + Por Mercado */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
@@ -3136,8 +3187,42 @@ export default function App() {
                 <div style={{ flex:1, height:1, background:G.border, marginLeft:4 }}/>
               </div>
             </div>
+            {/* Ejecutor KPI cards 2×3 */}
+            {(()=>{
+              const eT   = analTrades.filter(t=>t.ejecutado);
+              const eW   = eT.filter(t=>getResult(t)==="Win");
+              const eL   = eT.filter(t=>getResult(t)==="Loss");
+              const eWL  = eW.length+eL.length;
+              const eWR  = eWL ? ((eW.length/eWL)*100).toFixed(1) : null;
+              const eGW  = eW.reduce((s,t)=>s+t.rr,0);
+              const eGL  = Math.abs(eL.reduce((s,t)=>s+t.rr,0));
+              const ePF  = eGL>0 ? (eGW/eGL).toFixed(2) : eGW>0?"∞":null;
+              const eExp = eT.length ? (eT.reduce((s,t)=>s+t.rr,0)/eT.length).toFixed(2) : null;
+              const eAvgW= eW.length ? (eGW/eW.length).toFixed(2) : null;
+              const eAvgL= eL.length ? (-(eGL/eL.length)).toFixed(2) : null;
+              let ePeak=0,eDD=0,eRun=0;
+              [...eT].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(t=>{eRun+=t.rr;if(eRun>ePeak)ePeak=eRun;const d=ePeak-eRun;if(d>eDD)eDD=d;});
+              const cards=[
+                {label:"Win Rate",    val:eWR!==null?`${eWR}%`:"—",    col:eWR!==null?parseFloat(eWR)>=50?G.accent:G.red:G.textMuted},
+                {label:"Prof. Factor",val:ePF??    "—",                 col:ePF&&ePF!=="—"&&parseFloat(ePF)>=1?G.accent:G.red},
+                {label:"Val. Esperado",val:eExp!==null?`${eExp>0?"+":""}${eExp}R`:"—", col:eExp!==null?pColor(parseFloat(eExp)):G.textMuted},
+                {label:"Avg Loss",    val:eAvgL!==null?`${eAvgL}R`:"—", col:G.red},
+                {label:"Avg Win",     val:eAvgW!==null?`+${eAvgW}R`:"—", col:G.accent},
+                {label:"Drawdown",    val:eDD>0?`-${eDD.toFixed(2)}R`:"—", col:eDD>0?G.red:G.textMuted},
+              ];
+              return(
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
+                  {cards.map(c=>(
+                    <div key={c.label} style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:9, padding:"12px 14px" }}>
+                      <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:6 }}>{c.label}</div>
+                      <div style={{ fontSize:20, fontWeight:700, color:c.col, fontFamily:G.fontUI, letterSpacing:"-0.03em", lineHeight:1 }}>{c.val}</div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
 
-            {/* 2 metric cards */}
+            {/* Row 1: Execution Efficiency + Execution Rate */}
             <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:12, marginBottom:12 }}>
 
               {/* Execution Efficiency */}
@@ -3165,11 +3250,35 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Execution Rate (donut) */}
+              <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:12 }}>
+                <SectionHeader title={T("Execution Rate")}/>
+                {(()=>{
+                  const analExecCount    = analTrades.filter(t=>t.ejecutado).length;
+                  const analNonExecCount = analTrades.filter(t=>!t.ejecutado).length;
+                  const analExecRate     = analTrades.length>0?((analExecCount/analTrades.length)*100).toFixed(1):"0.0";
+                  return(
+                    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10, flex:1, justifyContent:"center" }}>
+                      <DonutChart exec={analExecCount} nonExec={analNonExecCount}/>
+                      <div style={{ fontSize:10, color:G.textSec, textAlign:"center", lineHeight:1.5 }}>
+                        <span style={{ color:execEffCol, fontWeight:700, fontSize:13 }}>{analExecRate}%</span>
+                        {" "}{T("setups vistos ejecutados en el período")}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+            </div>
+
+            {/* Row 2: Cost of Inaction + Cost of Overtrading */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:12, marginBottom:12 }}>
+
               {/* Cost of Inaction */}
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:12 }}>
                 <SectionHeader title="Cost of Inaction"/>
-                <div style={{ fontSize:36, fontWeight:800, fontFamily:G.fontUI, color:pColor(coiR), lineHeight:1, letterSpacing:"-0.04em" }}>
-                  {fmtR(coiR)}
+                <div style={{ fontSize:32, fontWeight:800, fontFamily:G.fontUI, color:pColor(coiR), lineHeight:1, letterSpacing:"-0.04em" }}>
+                  {coiR>0?`+${coiR.toFixed(2)}R Perdidos`:coiR<0?`${coiR.toFixed(2)}R Ahorrados`:"0.00R"}
                 </div>
                 <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:4 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
@@ -3187,6 +3296,32 @@ export default function App() {
                   <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
                     <span style={{ color:G.textSec }}>Largest Missed Loser</span>
                     <span style={{ color:G.red, fontFamily:G.fontMono, fontWeight:600 }}>{coiBigLoss!==null?`${coiBigLoss.toFixed(2)}R`:"—"}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Cost of Overtrading */}
+              <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:12 }}>
+                <SectionHeader title="Cost of Overtrading"/>
+                <div style={{ fontSize:32, fontWeight:800, fontFamily:G.fontUI, color:pColor(-cotR), lineHeight:1, letterSpacing:"-0.04em" }}>
+                  {cotR<0?`${cotR.toFixed(2)}R Perdidos`:cotR>0?`+${cotR.toFixed(2)}R Off-Plan`:"0.00R"}
+                </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:4 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
+                    <span style={{ color:G.textSec }}>Invalid Trades Executed</span>
+                    <span style={{ color:G.textPrimary, fontFamily:G.fontMono, fontWeight:600 }}>{cotCount}</span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
+                    <span style={{ color:G.textSec }}>Avg Invalid Trade R</span>
+                    <span style={{ color:pColor(parseFloat(cotAvg)), fontFamily:G.fontMono, fontWeight:600 }}>{fmtR(parseFloat(cotAvg))}</span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
+                    <span style={{ color:G.textSec }}>Largest Off-Plan Win</span>
+                    <span style={{ color:G.accent, fontFamily:G.fontMono, fontWeight:600 }}>{cotBigWin!==null?`+${cotBigWin.toFixed(2)}R`:"—"}</span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
+                    <span style={{ color:G.textSec }}>Largest Off-Plan Loss</span>
+                    <span style={{ color:G.red, fontFamily:G.fontMono, fontWeight:600 }}>{cotBigLoss!==null?`${cotBigLoss.toFixed(2)}R`:"—"}</span>
                   </div>
                 </div>
               </div>
@@ -3351,27 +3486,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Secuencia de Ejecución */}
-            <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:32 }}>
-              <SectionHeader title={T("Secuencia de Ejecución — Todos los Meses")}/>
-              {!monthlySeqs.length&&<div style={{color:G.textMuted,fontSize:11}}>Sin datos</div>}
-              <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
-                {monthlySeqs.map(({label,trades:mt})=>{
-                  const count=mt.length,validCount=mt.filter(t=>t.validez>=3).length,achieved=validCount>=6;
-                  const boxes=Math.max(10,count+(10-count%10===10?0:10-count%10));
-                  const sorted=[...mt].sort((a,b)=>new Date(a.date)-new Date(b.date));
-                  const resC=r=>r==="Win"?G.accent:r==="Loss"?G.red:r==="BE"?G.white:G.border;
-                  const resBg=r=>r==="Win"?`${G.accent}22`:r==="Loss"?`${G.red}22`:r==="BE"?"rgba(232,237,248,0.08)":"transparent";
-                  return(
-                    <div key={label}>
-                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}><span style={{fontSize:11,fontWeight:600,fontFamily:G.fontDisplay}}>{label}</span>{achieved&&<span style={{fontSize:13}}>🏆</span>}<span style={{fontSize:9,color:G.textSec,marginLeft:"auto"}}>{validCount} válidos · {count} ejec.</span></div>
-                      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{Array.from({length:boxes}).map((_,i)=>{const t=sorted[i],r=t?getResult(t):null,counts=t&&t.validez>=3;return(<div key={i} title={t?`${t.date} · ${t.pair} · ${r||"BE"}`:""} style={{width:24,height:24,borderRadius:"50%",background:r?resBg(r):G.surfaceAlt,border:`2px solid ${r?resC(r):G.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:r?resC(r):G.textMuted,fontWeight:700,flexShrink:0,boxShadow:counts&&r?`0 0 5px ${resC(r)}44`:"none",opacity:t&&!counts?0.4:1}}>{r==="Win"?"W":r==="Loss"?"L":r==="BE"?"B":""}</div>);})}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
             {/* ── SECCIÓN 3: Sistema vs Ejecutor ── */}
             {(()=>{
               const sysT  = analTrades.filter(t=>t.validez>=3);  // all valid setups
@@ -3460,7 +3574,7 @@ export default function App() {
               {/* Column headers */}
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 60px", gap:8, marginBottom:6, paddingLeft:4, paddingRight:4 }}>
                 {["Métrica","Sistema","Ejecutor","Δ"].map((h,i)=>(
-                  <div key={h} style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase", textAlign:i>0?"center":"left" }}>{h}</div>
+                  <div key={h} style={{ fontSize:9, color:G.textPrimary, fontFamily:G.fontDisplay, letterSpacing:"0.08em", textTransform:"uppercase", textAlign:i>0?"center":"left", fontWeight:700 }}>{h}</div>
                 ))}
               </div>
 
@@ -3476,11 +3590,11 @@ export default function App() {
                     :`${d>0?"+":""}${d.toFixed(2)}`;
                   return (
                     <div key={m.label} style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 60px", gap:8, background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:8, padding:"10px 12px", alignItems:"center" }}>
-                      <div style={{ fontSize:10, color:G.textSec, fontFamily:G.fontDisplay, fontWeight:600 }}>{m.label}</div>
-                      <div style={{ fontSize:12, color:G.textPrimary, fontFamily:G.fontMono, textAlign:"center", fontWeight:600 }}>{m.fmtS}</div>
-                      <div style={{ fontSize:12, color:G.textPrimary, fontFamily:G.fontMono, textAlign:"center", fontWeight:600 }}>{m.fmtE}</div>
+                      <div style={{ fontSize:10, color:G.textPrimary, fontFamily:G.fontDisplay, fontWeight:700 }}>{m.label}</div>
+                      <div style={{ fontSize:12, color:G.textSec, fontFamily:G.fontMono, textAlign:"center", fontWeight:400 }}>{m.fmtS}</div>
+                      <div style={{ fontSize:12, color:G.textSec, fontFamily:G.fontMono, textAlign:"center", fontWeight:400 }}>{m.fmtE}</div>
                       <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:3 }}>
-                        <span style={{ fontSize:10, color:col, fontFamily:G.fontMono, whiteSpace:"nowrap" }}>{ico} {devLabel}</span>
+                        <span style={{ fontSize:10, color:col, fontFamily:G.fontMono, whiteSpace:"nowrap", fontWeight:400 }}>{ico} {devLabel}</span>
                       </div>
                     </div>
                   );
@@ -3548,6 +3662,43 @@ export default function App() {
                   {(()=>{const ex=analTrades.filter(t=>t.ejecutado);const pnl=ex.reduce((s,t)=>s+t.pnl,0);const r=ex.reduce((s,t)=>s+t.rr,0);return(<><div style={{fontSize:14,fontWeight:800,fontFamily:G.fontUI,color:pColor(pnl),lineHeight:1,letterSpacing:"-0.03em"}}>{fmtD(pnl)}</div><div style={{fontSize:11,fontWeight:600,fontFamily:G.fontUI,color:pColor(r),letterSpacing:"-0.02em",marginTop:2}}>{fmtR(r)}</div></>);})()} 
                 </div>
               </div>
+
+              {/* Collapsible Secuencia de Ejecución */}
+              <div style={{ marginBottom:16, border:`1px solid ${G.border}`, borderRadius:8, overflow:"hidden" }}>
+                <button onClick={()=>setSeqOpen(o=>!o)}
+                  style={{ width:"100%", display:"flex", alignItems:"center", justifyContent:"space-between", padding:"11px 14px", background:G.surfaceAlt, border:"none", cursor:"pointer", textAlign:"left" }}>
+                  <span style={{ fontSize:11, fontWeight:600, color:G.textPrimary, fontFamily:G.fontDisplay }}>Secuencia de Ejecución</span>
+                  <span style={{ fontSize:12, color:G.textMuted, transition:"transform 0.2s", display:"inline-block", transform:seqOpen?"rotate(180deg)":"rotate(0deg)" }}>▾</span>
+                </button>
+                {seqOpen && (
+                  <div style={{ padding:"14px 14px 8px", display:"flex", flexDirection:"column", gap:18 }}>
+                    {!monthlySeqs.length && <div style={{color:G.textMuted,fontSize:11}}>Sin datos</div>}
+                    {monthlySeqs.map(({label,trades:mt})=>{
+                      const count=mt.length,validCount=mt.filter(t=>t.validez>=3).length,achieved=validCount>=6;
+                      const boxes=Math.max(10,count+(10-count%10===10?0:10-count%10));
+                      const sorted=[...mt].sort((a,b)=>new Date(a.date)-new Date(b.date));
+                      const resC=r=>r==="Win"?G.accent:r==="Loss"?G.red:r==="BE"?G.white:G.border;
+                      const resBg=r=>r==="Win"?`${G.accent}22`:r==="Loss"?`${G.red}22`:r==="BE"?"rgba(232,237,248,0.08)":"transparent";
+                      return(
+                        <div key={label}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                            <span style={{fontSize:11,fontWeight:600,fontFamily:G.fontDisplay}}>{label}</span>
+                            {achieved&&<span style={{fontSize:13}}>🏆</span>}
+                            <span style={{fontSize:9,color:G.textSec,marginLeft:"auto"}}>{validCount} válidos · {count} ejec.</span>
+                          </div>
+                          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                            {Array.from({length:boxes}).map((_,i)=>{
+                              const t=sorted[i],r=t?getResult(t):null,counts=t&&t.validez>=3;
+                              return(<div key={i} title={t?`${t.date} · ${t.pair} · ${r||"BE"}`:""} style={{width:24,height:24,borderRadius:"50%",background:r?resBg(r):G.surfaceAlt,border:`2px solid ${r?resC(r):G.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:r?resC(r):G.textMuted,fontWeight:700,flexShrink:0,boxShadow:counts&&r?`0 0 5px ${resC(r)}44`:"none",opacity:t&&!counts?0.4:1}}>{r==="Win"?"W":r==="Loss"?"L":r==="BE"?"B":""}</div>);
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {tradesByMonth.map(({label,trades:mt})=>(<div key={label} style={{marginBottom:24}}><div style={{fontSize:11,fontWeight:600,fontFamily:G.fontDisplay,color:G.textSec,marginBottom:8,paddingBottom:6,borderBottom:`1px solid ${G.border}`}}>{label} <span style={{fontWeight:400,fontSize:10}}>({mt.length})</span></div><TradeTable trades={mt} showDelete={false}/></div>))}
               {!tradesByMonth.length&&<div style={{color:G.textMuted,fontSize:12,textAlign:"center",padding:"28px 0"}}>Sin trades en este período</div>}
             </div>
