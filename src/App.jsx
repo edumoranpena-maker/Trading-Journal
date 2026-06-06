@@ -2674,6 +2674,7 @@ export default function App() {
   const [tradesNavDate, setTradesNavDate] = useState(() => { const n=new Date(); return {y:n.getFullYear(),m:n.getMonth()}; });
   const [trendHovered,  setTrendHovered]  = useState(null);
   const [seqOpen,       setSeqOpen]       = useState(false);
+  const [profileInfo,   setProfileInfo]   = useState(null); // { title, formula, desc }
   const [exportModal,   setExportModal]   = useState(false);
   const [importModal,   setImportModal]   = useState(false);
   const [importConfirm, setImportConfirm] = useState(null); // { trades, source }
@@ -3328,149 +3329,132 @@ export default function App() {
 
             </div>
 
-            {/* Executor Trend */}
+            {/* Executor Profile — Radar */}
             {(()=>{
-              // Build efficiency per bucket (same logic as OverviewSection)
-              const effBuckets = (()=>{
-                const allExec = trades.filter(t=>t.ejecutado);
-                const allTrades = trades;
-                const calcEff = (ts) => {
-                  const valid    = ts.filter(t=>t.validez>=3).length;
-                  const executed = ts.filter(t=>t.ejecutado && t.validez>=3).length;
-                  return valid>0 ? (executed/valid)*100 : null;
-                };
-                const calcCounts = (ts) => ({
-                  valid:    ts.filter(t=>t.validez>=3).length,
-                  executed: ts.filter(t=>t.ejecutado && t.validez>=3).length,
-                });
-                if (analTf==="quarterly" && analPeriod && analPeriod.includes("-Q")) {
-                  const [yr,qStr] = analPeriod.split("-Q");
-                  const year=parseInt(yr), q=parseInt(qStr), sm=(q-1)*3;
-                  return [0,1,2].map(i=>{
-                    const mo=sm+i;
-                    const ts=allTrades.filter(t=>{try{const d=parseLocalDate(t.date);return d.getFullYear()===year&&d.getMonth()===mo;}catch(e){return false;}});
-                    return {label:(MESES_ES[mo]||"").slice(0,3), eff:calcEff(ts), ...calcCounts(ts)};
-                  });
-                }
-                if (analTf==="annual" && analPeriod) {
-                  const year=parseInt(analPeriod);
-                  return MESES_ES.map((name,mo)=>{
-                    const ts=allTrades.filter(t=>{try{const d=parseLocalDate(t.date);return d.getFullYear()===year&&d.getMonth()===mo;}catch(e){return false;}});
-                    return {label:name.slice(0,3), eff:calcEff(ts), ...calcCounts(ts)};
-                  });
-                }
-                // alltime
-                const yMap={};
-                allTrades.forEach(t=>{try{const y=parseLocalDate(t.date).getFullYear();if(!yMap[y])yMap[y]=[];yMap[y].push(t);}catch(e){}});
-                return Object.keys(yMap).sort().map(y=>({label:`${y}`,eff:calcEff(yMap[y]),...calcCounts(yMap[y])}));
-              })();
+              const allT  = analTrades;
+              const total = allT.length;
+              if(!total) return null;
 
-              const points   = effBuckets.filter(b=>b.eff!==null);
-              const latest   = points.length ? points[points.length-1].eff : null;
-              const prev     = points.length>1 ? points[points.length-2].eff : null;
-              const delta    = latest!==null && prev!==null ? latest-prev : null;
-              const trend    = delta===null?"—":delta>2?"↑ Improving":delta<-2?"↓ Declining":"→ Stable";
-              const trendCol = delta===null?G.textMuted:delta>2?G.accent:delta<-2?G.red:G.textSec;
-              const latestCol= latest===null?G.textMuted:latest>=85?G.accent:latest>=65?G.blue:latest>=40?G.yellow:G.red;
+              // 1. Discipline: valid trades / total trades
+              const validT     = allT.filter(t=>t.validez>=3);
+              const discipline = Math.round((validT.length/total)*100);
 
-              // Sparkline
-              const W=220, H=72, PAD=6;
-              const effs = effBuckets.map(b=>b.eff??null);
-              const validEffs = effs.filter(v=>v!==null);
-              const minE = validEffs.length ? Math.max(0,  Math.min(...validEffs)-10) : 0;
-              const maxE = validEffs.length ? Math.min(100,Math.max(...validEffs)+10) : 100;
-              const eRange = maxE-minE || 1;
-              const [hovered, setHovered] = [trendHovered, setTrendHovered];
+              // 2. Trust: executed valid / total valid
+              const execValid  = validT.filter(t=>t.ejecutado);
+              const trust      = validT.length ? Math.round((execValid.length/validT.length)*100) : 0;
 
-              const pts = effBuckets.map((b,i)=>({
-                x: PAD + (effBuckets.length>1 ? i/(effBuckets.length-1) : 0.5) * (W-PAD*2),
-                y: b.eff!==null ? PAD + (1-(b.eff-minE)/eRange)*(H-PAD*2) : null,
-                eff: b.eff, label: b.label, i,
-                executed: b.executed??0, valid: b.valid??0,
-              }));
+              // 3. Risk: risk-compliant (executed valid + not-executed valid) / total
+              const riskOk     = validT.length; // valid setups = risk-compliant behavior
+              const risk       = Math.round((riskOk/total)*100);
 
-              // Build smooth SVG path through non-null points
-              const validPts = pts.filter(p=>p.y!==null);
-              let path="";
-              if(validPts.length===1){
-                path=`M${validPts[0].x},${validPts[0].y}`;
-              } else if(validPts.length>1){
-                path=`M${validPts[0].x},${validPts[0].y}`;
-                for(let i=1;i<validPts.length;i++){
-                  const p0=validPts[i-1], p1=validPts[i];
-                  const cx=(p0.x+p1.x)/2;
-                  path+=` C${cx},${p0.y} ${cx},${p1.y} ${p1.x},${p1.y}`;
-                }
+              // 4. Consistency: post-win & post-loss stability
+              const sorted = [...allT].sort((a,b)=>new Date(a.date)-new Date(b.date));
+              let postWinOpp=0,postWinBad=0,postLossOpp=0,postLossBad=0;
+              for(let i=1;i<sorted.length;i++){
+                const prev=sorted[i-1], cur=sorted[i];
+                const prevR=getResult(prev);
+                if(prevR!=="Win"&&prevR!=="Loss") continue;
+                const isBad = !cur.ejecutado&&cur.validez>=3 || cur.ejecutado&&cur.validez<3;
+                if(prevR==="Win"){  postWinOpp++;  if(isBad) postWinBad++;  }
+                if(prevR==="Loss"){ postLossOpp++; if(isBad) postLossBad++; }
               }
+              const pwStab = postWinOpp  ? 1-postWinBad/postWinOpp   : 1;
+              const plStab = postLossOpp ? 1-postLossBad/postLossOpp : 1;
+              const consistency = Math.round(((pwStab+plStab)/2)*100);
 
-              // Area fill path
-              const lastPt = validPts[validPts.length-1];
-              const firstPt = validPts[0];
-              const areaPath = path + (validPts.length>0?` L${lastPt.x},${H} L${firstPt.x},${H} Z`:"");
+              const metrics = [
+                { key:"discipline",  label:"Discipline",  score:discipline,  color:"#60a5fa",
+                  title:"Discipline", formula:"Valid Trades / Total Trades × 100",
+                  desc:"Measures how consistently the trader avoids invalid setups and follows the trading plan." },
+                { key:"trust",       label:"Trust",       score:trust,       color:G.accent,
+                  title:"Trust", formula:"Executed Valid Setups / Total Valid Setups × 100",
+                  desc:"Measures how often the trader trusts and acts on valid opportunities instead of skipping them." },
+                { key:"risk",        label:"Risk",        score:risk,        color:"#a78bfa",
+                  title:"Risk Adherence", formula:"Valid Setups (risk-compliant) / Total Trades × 100",
+                  desc:"Measures adherence to risk management rules. Valid setups represent correct risk behavior." },
+                { key:"consistency", label:"Consistency", score:consistency, color:G.yellow,
+                  title:"Consistency", formula:"(Post-Win Stability + Post-Loss Stability) / 2 × 100",
+                  desc:"Measures whether recent results affect execution. High = stable behavior after wins and losses. Low = hesitation, revenge trading, or overconfidence." },
+              ];
+
+              // Radar SVG
+              const CX=80, CY=80, R=58, N=4;
+              const angleOf = i => (i/N)*2*Math.PI - Math.PI/2;
+              const pt = (i, r) => ({
+                x: CX + r * Math.cos(angleOf(i)),
+                y: CY + r * Math.sin(angleOf(i)),
+              });
+              const rings = [25,50,75,100];
+              const polyPts = metrics.map((m,i)=>pt(i, (m.score/100)*R));
+              const poly = polyPts.map(p=>`${p.x},${p.y}`).join(" ");
 
               return (
-                <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12, display:"flex", flexDirection:"column", gap:10 }}>
-                  <SectionHeader title="Executor Trend"/>
-                  <div style={{ display:"flex", alignItems:"flex-start", gap:20, flexWrap:"wrap" }}>
-                    {/* Left: big number + trend */}
-                    <div style={{ display:"flex", flexDirection:"column", gap:6, minWidth:100 }}>
-                      <div style={{ fontSize:34, fontWeight:800, fontFamily:G.fontUI, color:latestCol, lineHeight:1, letterSpacing:"-0.04em" }}>
-                        {latest!==null?`${latest.toFixed(1)}%`:"—"}
-                      </div>
-                      <div style={{ fontSize:11, fontWeight:600, color:trendCol, fontFamily:G.fontDisplay, letterSpacing:"0.02em" }}>{trend}</div>
-                      {delta!==null && <div style={{ fontSize:9, color:G.textMuted, fontFamily:G.fontMono }}>{delta>0?`+${delta.toFixed(1)}`:delta.toFixed(1)}% vs prev</div>}
+                <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12 }}>
+                  <SectionHeader title="Executor Profile"/>
+                  <div style={{ display:"flex", gap:20, flexWrap:"wrap", alignItems:"center" }}>
+
+                    {/* Radar */}
+                    <div style={{ flexShrink:0 }}>
+                      <svg width={160} height={160} viewBox="0 0 160 160">
+                        {/* Ring lines */}
+                        {rings.map(pct=>(
+                          <polygon key={pct}
+                            points={metrics.map((_,i)=>{ const p=pt(i,(pct/100)*R); return `${p.x},${p.y}`; }).join(" ")}
+                            fill="none" stroke={G.border} strokeWidth={pct===100?1.5:0.8}
+                            strokeDasharray={pct===100?"none":"3,3"}/>
+                        ))}
+                        {/* Axis lines */}
+                        {metrics.map((_,i)=>{
+                          const outer=pt(i,R);
+                          return <line key={i} x1={CX} y1={CY} x2={outer.x} y2={outer.y} stroke={G.border} strokeWidth={0.8}/>;
+                        })}
+                        {/* Data polygon */}
+                        <polygon points={poly} fill={`${G.blue}28`} stroke={G.blue} strokeWidth={2} strokeLinejoin="round"/>
+                        {/* Data points */}
+                        {polyPts.map((p,i)=>(
+                          <circle key={i} cx={p.x} cy={p.y} r={3.5}
+                            fill={metrics[i].color} stroke={G.surface} strokeWidth={1.5}/>
+                        ))}
+                        {/* Axis labels */}
+                        {metrics.map((m,i)=>{
+                          const lp=pt(i,R+14);
+                          return(
+                            <text key={i} x={lp.x} y={lp.y+3} textAnchor="middle"
+                              fontSize={7.5} fill={G.textSec} fontFamily={G.fontDisplay}
+                              fontWeight="600">{m.label}</text>
+                          );
+                        })}
+                        {/* Ring % labels */}
+                        {[50,100].map(pct=>(
+                          <text key={pct} x={CX+2} y={CY-(pct/100)*R+3}
+                            fontSize={5.5} fill={G.textMuted} fontFamily={G.fontMono} textAnchor="middle">
+                            {pct}
+                          </text>
+                        ))}
+                      </svg>
                     </div>
 
-                    {/* Right: sparkline */}
-                    <div style={{ flex:1, minWidth:160, position:"relative" }}>
-                      {validPts.length < 2
-                        ? <div style={{ fontSize:10, color:G.textMuted, padding:"20px 0" }}>Sin datos suficientes para mostrar tendencia</div>
-                        : <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ overflow:"visible", display:"block" }}
-                            onMouseLeave={()=>setHovered(null)}>
-                            <defs>
-                              <linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor={G.blue} stopOpacity="0.25"/>
-                                <stop offset="100%" stopColor={G.blue} stopOpacity="0"/>
-                              </linearGradient>
-                            </defs>
-                            {/* Area */}
-                            {validPts.length>1 && <path d={areaPath} fill="url(#trendGrad)"/>}
-                            {/* Line */}
-                            <path d={path} fill="none" stroke={G.blue} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                            {/* Points */}
-                            {validPts.map((p,i)=>{
-                              const isLast=i===validPts.length-1;
-                              const isHov=hovered===p.i;
-                              return (
-                                <g key={i} onMouseEnter={()=>setHovered(p.i)} style={{cursor:"default"}}>
-                                  <circle cx={p.x} cy={p.y} r={isHov||isLast?5:3}
-                                    fill={isLast?G.blue:G.surface} stroke={G.blue}
-                                    strokeWidth={isLast?0:1.5}
-                                    style={{transition:"r 0.15s"}}/>
-                                  {isLast && <circle cx={p.x} cy={p.y} r={8} fill={`${G.blue}22`}/>}
-                                  {/* Tooltip */}
-                                  {isHov && (
-                                    <g>
-                                      <rect x={p.x-38} y={p.y-52} width={76} height={46} rx={4}
-                                        fill={G.surfaceAlt} stroke={G.border} strokeWidth={1}/>
-                                      <text x={p.x} y={p.y-38} textAnchor="middle" fontSize={8} fill={G.textSec} fontFamily={G.fontDisplay}>{p.label}</text>
-                                      <text x={p.x} y={p.y-27} textAnchor="middle" fontSize={7} fill={G.textMuted} fontFamily={G.fontMono}>{`Exec: ${p.executed} / Valid: ${p.valid}`}</text>
-                                      <text x={p.x} y={p.y-14} textAnchor="middle" fontSize={8} fill={G.textPrimary} fontFamily={G.fontMono} fontWeight="600">{p.eff!==null?`${p.eff.toFixed(1)}%`:"—"}</text>
-                                    </g>
-                                  )}
-                                </g>
-                              );
-                            })}
-                          </svg>
-                      }
-                      {/* X labels */}
-                      {validPts.length>=2 && (
-                        <div style={{ display:"flex", justifyContent:"space-between", marginTop:4, paddingLeft:PAD, paddingRight:PAD }}>
-                          {effBuckets.filter((_,i)=>i===0||i===Math.floor(effBuckets.length/2)||i===effBuckets.length-1).map((b,i)=>(
-                            <span key={i} style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay }}>{b.label}</span>
-                          ))}
+                    {/* Metrics list */}
+                    <div style={{ flex:1, minWidth:160, display:"flex", flexDirection:"column", gap:10 }}>
+                      {metrics.map(m=>(
+                        <div key={m.key} style={{ display:"flex", alignItems:"center", gap:10 }}>
+                          <div style={{ width:3, height:28, borderRadius:2, background:m.color, flexShrink:0 }}/>
+                          <div style={{ flex:1 }}>
+                            <div style={{ display:"flex", alignItems:"center", gap:4, marginBottom:3 }}>
+                              <span style={{ fontSize:10, fontWeight:600, color:G.textPrimary, fontFamily:G.fontDisplay }}>{m.label}</span>
+                              <button onClick={()=>setProfileInfo(m)}
+                                style={{ background:"none", border:"none", cursor:"pointer", fontSize:10, color:G.textMuted, padding:0, lineHeight:1, flexShrink:0 }}>ℹ️</button>
+                            </div>
+                            {/* Progress bar */}
+                            <div style={{ height:5, background:G.surfaceAlt, borderRadius:3, overflow:"hidden" }}>
+                              <div style={{ height:"100%", width:`${m.score}%`, background:m.color, borderRadius:3, transition:"width 0.5s cubic-bezier(.4,0,.2,1)" }}/>
+                            </div>
+                          </div>
+                          <div style={{ fontSize:15, fontWeight:700, color:m.color, fontFamily:G.fontUI, letterSpacing:"-0.02em", minWidth:36, textAlign:"right" }}>
+                            {m.score}%
+                          </div>
                         </div>
-                      )}
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -3710,6 +3694,23 @@ export default function App() {
         {tab === "reportes" && <ReportesTab trades={trades} setExportModal={setExportModal} setImportModal={setImportModal} importFeedback={importFeedback} setImportFeedback={setImportFeedback}/>}
 
       </main>
+
+      {/* ── EXECUTOR PROFILE INFO MODAL ── */}
+      {profileInfo && (
+        <div onClick={()=>setProfileInfo(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:9900, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+          <div onClick={e=>e.stopPropagation()} style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:12, padding:24, width:"100%", maxWidth:340 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
+              <span style={{ fontSize:13, fontWeight:700, fontFamily:G.fontDisplay, color:G.textPrimary }}>{profileInfo.title}</span>
+              <button onClick={()=>setProfileInfo(null)} style={{ background:"none", border:"none", color:G.textMuted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>
+            </div>
+            <div style={{ background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:8, padding:"10px 12px", marginBottom:12 }}>
+              <div style={{ fontSize:8, color:G.textMuted, letterSpacing:"0.12em", textTransform:"uppercase", fontFamily:G.fontDisplay, marginBottom:5 }}>Formula</div>
+              <div style={{ fontSize:11, color:G.accent, fontFamily:G.fontMono, lineHeight:1.5 }}>{profileInfo.formula}</div>
+            </div>
+            <div style={{ fontSize:11, color:G.textSec, lineHeight:1.65 }}>{profileInfo.desc}</div>
+          </div>
+        </div>
+      )}
 
       {/* ── EXPORT MODAL ── */}
       {exportModal && (
