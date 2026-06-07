@@ -718,6 +718,99 @@ function KpiCard({ label, val, sub, col, tag }) {
   );
 }
 
+function AlignChart({ allPoints, W, H, PAD, chartW, chartH, xScale, yScale, zero_y, yTicks, xLabelIdxs, makePath, makeArea, fmtDateShort }) {
+  const [tip, setTip] = React.useState(null);
+  const svgRef = React.useRef(null);
+
+  const handleMove = (e) => {
+    const svg = svgRef.current;
+    if (!svg || !allPoints.length) return;
+    const rect = svg.getBoundingClientRect();
+    const scaleX = W / rect.width;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const mx = (clientX - rect.left) * scaleX - PAD.l;
+    const idx = Math.round((mx / chartW) * (allPoints.length - 1));
+    const clamped = Math.max(0, Math.min(allPoints.length - 1, idx));
+    setTip({ idx: clamped, x: xScale(clamped) + PAD.l, ...allPoints[clamped] });
+  };
+
+  return (
+    <div style={{ position:"relative" }}>
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", height:"auto", display:"block", overflow:"visible", cursor:"crosshair" }}
+        onMouseMove={handleMove} onTouchMove={handleMove}
+        onMouseLeave={()=>setTip(null)} onTouchEnd={()=>setTip(null)}>
+
+        {yTicks.map((t,i) => (
+          <g key={i}>
+            <line x1={PAD.l} y1={t.y + PAD.t} x2={PAD.l + chartW} y2={t.y + PAD.t}
+              stroke={G.border} strokeWidth="0.5" strokeDasharray="3,4" opacity="0.6"/>
+            <text x={PAD.l - 5} y={t.y + PAD.t + 3.5} textAnchor="end"
+              fontSize="8" fill={G.textMuted} fontFamily="DM Mono, monospace">
+              {t.v >= 0 ? "+" : ""}{t.v.toFixed(1)}R
+            </text>
+          </g>
+        ))}
+
+        <line x1={PAD.l} y1={zero_y + PAD.t} x2={PAD.l + chartW} y2={zero_y + PAD.t}
+          stroke={G.border} strokeWidth="1" opacity="0.9"/>
+
+        {allPoints.length > 1 && <>
+          <path d={makeArea("sysR", zero_y)} fill={G.blue} opacity="0.07"/>
+          <path d={makeArea("execR", zero_y)} fill={G.accent} opacity="0.09"/>
+        </>}
+
+        {allPoints.length > 1 && <>
+          <path d={makePath("sysR")}  fill="none" stroke={G.blue}   strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" opacity="0.85"/>
+          <path d={makePath("execR")} fill="none" stroke={G.accent} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round"/>
+        </>}
+
+        {xLabelIdxs.map(i => (
+          <text key={i} x={xScale(i) + PAD.l} y={H - PAD.b + 16}
+            textAnchor="middle" fontSize="8" fill={G.textMuted} fontFamily="DM Mono, monospace">
+            {fmtDateShort(allPoints[i]?.date)}
+          </text>
+        ))}
+
+        {tip && <>
+          <line x1={tip.x} y1={PAD.t} x2={tip.x} y2={PAD.t + chartH}
+            stroke={G.borderHov} strokeWidth="1" strokeDasharray="3,3" opacity="0.8"/>
+          <circle cx={tip.x} cy={yScale(tip.sysR) + PAD.t}  r="3.5" fill={G.blue}   stroke={G.bg} strokeWidth="1.5"/>
+          <circle cx={tip.x} cy={yScale(tip.execR) + PAD.t} r="3.5" fill={G.accent} stroke={G.bg} strokeWidth="1.5"/>
+        </>}
+      </svg>
+
+      {tip && (()=>{
+        const tipW = 148, svgRendW = svgRef.current?.getBoundingClientRect().width || W;
+        const pct = tip.x / W;
+        const left = Math.min(Math.max(0, pct * 100 - 12), 100 - (tipW / svgRendW * 100));
+        return (
+          <div style={{ position:"absolute", top:0, left:`${left}%`, pointerEvents:"none",
+            background:G.surfaceAlt, border:`1px solid ${G.borderHov}`, borderRadius:8,
+            padding:"8px 11px", fontSize:10, fontFamily:"DM Mono, monospace",
+            boxShadow:"0 6px 24px rgba(0,0,0,0.35)", minWidth:148, zIndex:10 }}>
+            <div style={{ color:G.textSec, marginBottom:5, fontSize:9, letterSpacing:"0.08em", textTransform:"uppercase" }}>{fmtDateShort(tip.date)}</div>
+            <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
+              <div style={{ width:8, height:2, borderRadius:1, background:G.blue, flexShrink:0 }}/>
+              <span style={{ color:G.textSec }}>Sistema</span>
+              <span style={{ marginLeft:"auto", color:tip.sysR >= 0 ? G.accent : G.red, fontWeight:600 }}>{tip.sysR >= 0 ? "+" : ""}{tip.sysR.toFixed(2)}R</span>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+              <div style={{ width:8, height:2, borderRadius:1, background:G.accent, flexShrink:0 }}/>
+              <span style={{ color:G.textSec }}>Ejecutor</span>
+              <span style={{ marginLeft:"auto", color:tip.execR >= 0 ? G.accent : G.red, fontWeight:600 }}>{tip.execR >= 0 ? "+" : ""}{tip.execR.toFixed(2)}R</span>
+            </div>
+            {tip.sysR !== 0 && (
+              <div style={{ marginTop:5, paddingTop:5, borderTop:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between" }}>
+                <span style={{ color:G.textSec }}>Gap</span>
+                <span style={{ color:G.textMuted }}>{(tip.execR - tip.sysR).toFixed(2)}R</span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
 function BWCard({ label, arr, best }) {
   // Best = highest WR (arr[0] after sort desc). Worst = lowest WR (arr[arr.length-1]).
   // If only 1 period exists, show it for Best but show "Sin datos" for Worst
@@ -3847,108 +3940,6 @@ export default function App() {
                 return `${parseInt(day)} ${months[parseInt(m)] || m}`;
               };
 
-              // Tooltip state (managed via SVG hover using refs in a wrapper component)
-              const AlignChart = () => {
-                const [tip, setTip] = React.useState(null);
-                const svgRef = React.useRef(null);
-
-                const handleMove = (e) => {
-                  const svg = svgRef.current;
-                  if (!svg || !allPoints.length) return;
-                  const rect = svg.getBoundingClientRect();
-                  const scaleX = W / rect.width;
-                  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-                  const mx = (clientX - rect.left) * scaleX - PAD.l;
-                  const idx = Math.round((mx / chartW) * (allPoints.length - 1));
-                  const clamped = Math.max(0, Math.min(allPoints.length - 1, idx));
-                  setTip({ idx: clamped, x: xScale(clamped) + PAD.l, ...allPoints[clamped] });
-                };
-
-                return (
-                  <div style={{ position:"relative" }}>
-                    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", height:"auto", display:"block", overflow:"visible", cursor:"crosshair" }}
-                      onMouseMove={handleMove} onTouchMove={handleMove}
-                      onMouseLeave={()=>setTip(null)} onTouchEnd={()=>setTip(null)}>
-
-                      {/* Grid lines */}
-                      {yTicks.map((t,i) => (
-                        <g key={i}>
-                          <line x1={PAD.l} y1={t.y + PAD.t} x2={PAD.l + chartW} y2={t.y + PAD.t}
-                            stroke={G.border} strokeWidth="0.5" strokeDasharray="3,4" opacity="0.6"/>
-                          <text x={PAD.l - 5} y={t.y + PAD.t + 3.5} textAnchor="end"
-                            fontSize="8" fill={G.textMuted} fontFamily="DM Mono, monospace">
-                            {t.v >= 0 ? "+" : ""}{t.v.toFixed(1)}R
-                          </text>
-                        </g>
-                      ))}
-
-                      {/* Zero baseline */}
-                      <line x1={PAD.l} y1={zero_y + PAD.t} x2={PAD.l + chartW} y2={zero_y + PAD.t}
-                        stroke={G.border} strokeWidth="1" opacity="0.9"/>
-
-                      {/* Area fills */}
-                      {allPoints.length > 1 && <>
-                        <path d={makeArea("sysR", zero_y)} fill={G.blue} opacity="0.07"/>
-                        <path d={makeArea("execR", zero_y)} fill={G.accent} opacity="0.09"/>
-                      </>}
-
-                      {/* Lines */}
-                      {allPoints.length > 1 && <>
-                        <path d={makePath("sysR")}  fill="none" stroke={G.blue}   strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" opacity="0.85"/>
-                        <path d={makePath("execR")} fill="none" stroke={G.accent} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round"/>
-                      </>}
-
-                      {/* X axis labels */}
-                      {xLabelIdxs.map(i => (
-                        <text key={i} x={xScale(i) + PAD.l} y={H - PAD.b + 16}
-                          textAnchor="middle" fontSize="8" fill={G.textMuted} fontFamily="DM Mono, monospace">
-                          {fmtDateShort(allPoints[i]?.date)}
-                        </text>
-                      ))}
-
-                      {/* Tooltip crosshair */}
-                      {tip && <>
-                        <line x1={tip.x} y1={PAD.t} x2={tip.x} y2={PAD.t + chartH}
-                          stroke={G.borderHov} strokeWidth="1" strokeDasharray="3,3" opacity="0.8"/>
-                        <circle cx={tip.x} cy={yScale(tip.sysR) + PAD.t}  r="3.5" fill={G.blue}   stroke={G.bg} strokeWidth="1.5"/>
-                        <circle cx={tip.x} cy={yScale(tip.execR) + PAD.t} r="3.5" fill={G.accent} stroke={G.bg} strokeWidth="1.5"/>
-                      </>}
-                    </svg>
-
-                    {/* Tooltip box */}
-                    {tip && (()=>{
-                      const tipW = 148, svgRendW = svgRef.current?.getBoundingClientRect().width || W;
-                      const pct = tip.x / W;
-                      const left = Math.min(Math.max(0, pct * 100 - 12), 100 - (tipW / svgRendW * 100));
-                      return (
-                        <div style={{ position:"absolute", top:0, left:`${left}%`, pointerEvents:"none",
-                          background:G.surfaceAlt, border:`1px solid ${G.borderHov}`, borderRadius:8,
-                          padding:"8px 11px", fontSize:10, fontFamily:"DM Mono, monospace",
-                          boxShadow:"0 6px 24px rgba(0,0,0,0.35)", minWidth:148, zIndex:10 }}>
-                          <div style={{ color:G.textSec, marginBottom:5, fontSize:9, letterSpacing:"0.08em", textTransform:"uppercase" }}>{fmtDateShort(tip.date)}</div>
-                          <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
-                            <div style={{ width:8, height:2, borderRadius:1, background:G.blue, flexShrink:0 }}/>
-                            <span style={{ color:G.textSec }}>Sistema</span>
-                            <span style={{ marginLeft:"auto", color:tip.sysR >= 0 ? G.accent : G.red, fontWeight:600 }}>{tip.sysR >= 0 ? "+" : ""}{tip.sysR.toFixed(2)}R</span>
-                          </div>
-                          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                            <div style={{ width:8, height:2, borderRadius:1, background:G.accent, flexShrink:0 }}/>
-                            <span style={{ color:G.textSec }}>Ejecutor</span>
-                            <span style={{ marginLeft:"auto", color:tip.execR >= 0 ? G.accent : G.red, fontWeight:600 }}>{tip.execR >= 0 ? "+" : ""}{tip.execR.toFixed(2)}R</span>
-                          </div>
-                          {tip.sysR !== 0 && (
-                            <div style={{ marginTop:5, paddingTop:5, borderTop:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between" }}>
-                              <span style={{ color:G.textSec }}>Gap</span>
-                              <span style={{ color:G.textMuted }}>{(tip.execR - tip.sysR).toFixed(2)}R</span>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                );
-              };
-
               return (
                 <div style={{ marginBottom:32 }}>
                   {/* Section header */}
@@ -3986,7 +3977,7 @@ export default function App() {
 
                     {!allPoints.length || allPoints.length < 2
                       ? <div style={{ color:G.textMuted, fontSize:11, textAlign:"center", padding:"28px 0" }}>Sin datos suficientes para graficar</div>
-                      : <AlignChart/>
+                      : <AlignChart allPoints={allPoints} W={W} H={H} PAD={PAD} chartW={chartW} chartH={chartH} xScale={xScale} yScale={yScale} zero_y={zero_y} yTicks={yTicks} xLabelIdxs={xLabelIdxs} makePath={makePath} makeArea={makeArea} fmtDateShort={fmtDateShort}/>
                     }
 
                     {/* Gap annotation */}
