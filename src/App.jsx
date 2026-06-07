@@ -460,7 +460,6 @@ function buildPeriodOptions(tf, trades) {
 
 function wrScore(wins,losses,sumR){const wl=wins+losses;if(wl===0)return -1+(sumR*0.001); // BE-only: below any real WR, sumR as micro tiebreaker
   return(wins/wl)*100;}
-  return(wins/wl)*100;}
 function statsByDayOfWeek(trades){
   const m={};trades.filter(t=>t.ejecutado).forEach(t=>{const dow=parseLocalDate(t.date).getDay();if(!m[dow])m[dow]={label:DIAS_ES[dow],wins:0,losses:0,sumR:0};const r=getResult(t);if(r==="Win")m[dow].wins++;else if(r==="Loss")m[dow].losses++;m[dow].sumR+=t.rr;});
   return Object.values(m).map(v=>{const wl=v.wins+v.losses;return{label:v.label,count:v.wins+v.losses,wr:wl?((v.wins/wl)*100).toFixed(0):0,score:wrScore(v.wins,v.losses,v.sumR),sumR:v.sumR};}).sort((a,b)=>b.score!==a.score?b.score-a.score:b.sumR-a.sumR);
