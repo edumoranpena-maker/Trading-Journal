@@ -161,7 +161,7 @@ function makeTokens(theme) {
     red:"#e02040", redDim:"rgba(224,32,64,0.10)",
     yellow:"#c9960a", yellowDim:"rgba(201,150,10,0.12)",
     blue:"#3a6fd4", blueDim:"rgba(58,111,212,0.10)",
-    white:"#1a1f2e", textPrimary:"#1e2433", textSec:"#6b7590", textMuted:"#b0b8cc",
+    white:"#1a1f2e", textPrimary:"#1e2433", textSec:"#4a5268", textMuted:"#7a8299",
     fontMono:"'DM Mono', monospace", fontDisplay:"'Syne', sans-serif", fontUI:"'Inter', sans-serif",
   };
   return {
@@ -171,7 +171,7 @@ function makeTokens(theme) {
     red:"#f04060", redDim:"rgba(240,64,96,0.10)",
     yellow:"#e8b320", yellowDim:"rgba(232,179,32,0.12)",
     blue:"#4f8ef5", blueDim:"rgba(79,142,245,0.10)",
-    white:"#e8edf8", textPrimary:"#d4d9e8", textSec:"#5e6880", textMuted:"#282f42",
+    white:"#e8edf8", textPrimary:"#e2e7f5", textSec:"#8a95b0", textMuted:"#505870",
     fontMono:"'DM Mono', monospace", fontDisplay:"'Syne', sans-serif", fontUI:"'Inter', sans-serif",
   };
 }
@@ -842,7 +842,7 @@ function ExecutionAlignment({ analTrades, G }) {
                     <line x1={PAD.l} y1={t.y+PAD.t} x2={PAD.l+chartW} y2={t.y+PAD.t}
                       stroke={G.border} strokeWidth="0.5" strokeDasharray="3,4" opacity="0.6"/>
                     <text x={PAD.l-5} y={t.y+PAD.t+3.5} textAnchor="end"
-                      fontSize="8" fill={G.textMuted} fontFamily="DM Mono, monospace">
+                      fontSize="11" fill={G.textMuted} fontFamily="DM Mono, monospace">
                       {t.v>=0?"+":""}{t.v.toFixed(1)}R
                     </text>
                   </g>
@@ -853,7 +853,7 @@ function ExecutionAlignment({ analTrades, G }) {
                 <path d={makePath("execR")} fill="none" stroke={G.blue}   strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" opacity="0.9"/>
                 {xLabelIdxs.map(i => (
                   <text key={i} x={xScale(i)+PAD.l} y={H-PAD.b+16}
-                    textAnchor="middle" fontSize="8" fill={G.textMuted} fontFamily="DM Mono, monospace">
+                    textAnchor="middle" fontSize="11" fill={G.textMuted} fontFamily="DM Mono, monospace">
                     {fmtDateShort(allPoints[i]?.date)}
                   </text>
                 ))}
@@ -3384,10 +3384,10 @@ export default function App() {
               const cards=[
                 {label:"Win Rate",    val:sWR!==null?`${sWR}%`:"—",   col:sWR!==null?parseFloat(sWR)>=50?G.accent:G.red:G.textMuted},
                 {label:"Prof. Factor",val:sPF??   "—",                col:sPF&&sPF!=="—"&&parseFloat(sPF)>=1?G.accent:G.red},
-                {label:"Val. Esperado",val:sExp!==null?`${sExp>0?"+":""}${sExp}R`:"—", col:sExp!==null?pColor(parseFloat(sExp)):G.textMuted},
-                {label:"Avg Loss",    val:sAvgL!==null?`${sAvgL}R`:"—", col:G.red},
-                {label:"Avg Win",     val:sAvgW!==null?`+${sAvgW}R`:"—", col:G.accent},
                 {label:"Drawdown",    val:sDD>0?`-${sDD.toFixed(2)}R`:"—", col:sDD>0?G.red:G.textMuted},
+                {label:"Val. Esperado",val:sExp!==null?`${sExp>0?"+":""}${sExp}R`:"—", col:sExp!==null?pColor(parseFloat(sExp)):G.textMuted},
+                {label:"Avg Win",     val:sAvgW!==null?`+${sAvgW}R`:"—", col:G.accent},
+                {label:"Avg Loss",    val:sAvgL!==null?`${sAvgL}R`:"—", col:G.red},
               ];
               return(
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
@@ -3592,10 +3592,10 @@ export default function App() {
               const cards=[
                 {label:"Win Rate",    val:eWR!==null?`${eWR}%`:"—",    col:eWR!==null?parseFloat(eWR)>=50?G.accent:G.red:G.textMuted},
                 {label:"Prof. Factor",val:ePF??    "—",                 col:ePF&&ePF!=="—"&&parseFloat(ePF)>=1?G.accent:G.red},
-                {label:"Val. Esperado",val:eExp!==null?`${eExp>0?"+":""}${eExp}R`:"—", col:eExp!==null?pColor(parseFloat(eExp)):G.textMuted},
-                {label:"Avg Loss",    val:eAvgL!==null?`${eAvgL}R`:"—", col:G.red},
-                {label:"Avg Win",     val:eAvgW!==null?`+${eAvgW}R`:"—", col:G.accent},
                 {label:"Drawdown",    val:eDD>0?`-${eDD.toFixed(2)}R`:"—", col:eDD>0?G.red:G.textMuted},
+                {label:"Val. Esperado",val:eExp!==null?`${eExp>0?"+":""}${eExp}R`:"—", col:eExp!==null?pColor(parseFloat(eExp)):G.textMuted},
+                {label:"Avg Win",     val:eAvgW!==null?`+${eAvgW}R`:"—", col:G.accent},
+                {label:"Avg Loss",    val:eAvgL!==null?`${eAvgL}R`:"—", col:G.red},
               ];
               return(
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
@@ -3609,111 +3609,86 @@ export default function App() {
               );
             })()}
 
-            {/* Row 1: Execution Rate + Execution Efficiency */}
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:12, marginBottom:12 }}>
+            {/* Unified block: Execution Rate + Efficiency + CoI + CoO */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:1, marginBottom:12, background:G.border, borderRadius:10, overflow:"hidden" }}>
 
-              {/* Execution Rate (donut) — LEFT */}
-              <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:12 }}>
-                <SectionHeader title={T("Execution Rate")}/>
-                {(()=>{
-                  const analExecCount    = analTrades.filter(t=>t.ejecutado).length;
-                  const analNonExecCount = analTrades.filter(t=>!t.ejecutado).length;
-                  const analExecRate     = analTrades.length>0?((analExecCount/analTrades.length)*100).toFixed(1):"0.0";
-                  return(
-                    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10, flex:1, justifyContent:"center" }}>
-                      <DonutChart exec={analExecCount} nonExec={analNonExecCount}/>
-                      <div style={{ fontSize:10, color:G.textSec, textAlign:"center", lineHeight:1.5 }}>
-                        <span style={{ color:execEffCol, fontWeight:700, fontSize:13 }}>{analExecRate}%</span>
-                        {" "}{T("setups vistos ejecutados en el período")}
+              {/* Execution Rate */}
+              {(()=>{
+                const analExecCount    = analTrades.filter(t=>t.ejecutado).length;
+                const analNonExecCount = analTrades.filter(t=>!t.ejecutado).length;
+                const analExecRate     = analTrades.length>0?Math.round((analExecCount/analTrades.length)*100):0;
+                return(
+                  <div style={{ background:G.surface, padding:"18px 16px", display:"flex", flexDirection:"column", gap:8 }}>
+                    <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase" }}>Execution Rate</div>
+                    <div style={{ fontSize:36, fontWeight:800, fontFamily:G.fontUI, color:execEffCol, lineHeight:1, letterSpacing:"-0.04em" }}>{analExecRate}%</div>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end" }}>
+                      <div style={{ textAlign:"center" }}>
+                        <div style={{ fontSize:16, fontWeight:700, color:G.accent, fontFamily:G.fontMono }}>{analExecCount}</div>
+                        <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, marginTop:2 }}>Executed</div>
+                      </div>
+                      <div style={{ fontSize:20, color:G.border, fontWeight:300 }}>|</div>
+                      <div style={{ textAlign:"center" }}>
+                        <div style={{ fontSize:16, fontWeight:700, color:G.red, fontFamily:G.fontMono }}>{analNonExecCount}</div>
+                        <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, marginTop:2 }}>Missed</div>
                       </div>
                     </div>
-                  );
-                })()}
-              </div>
+                  </div>
+                );
+              })()}
 
-              {/* Execution Efficiency — RIGHT */}
-              <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:12 }}>
-                <SectionHeader title="Execution Efficiency"/>
+              {/* Execution Efficiency */}
+              <div style={{ background:G.surface, padding:"18px 16px", display:"flex", flexDirection:"column", gap:8 }}>
+                <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase" }}>Execution Efficiency</div>
                 <div style={{ fontSize:36, fontWeight:800, fontFamily:G.fontUI, color:execEffCol, lineHeight:1, letterSpacing:"-0.04em" }}>
                   {execEff!==null?`${execEff.toFixed(1)}%`:"—"}
                 </div>
                 <div style={{ display:"inline-flex", alignSelf:"flex-start", background:`${execEffCol}18`, border:`1px solid ${execEffCol}44`, borderRadius:5, padding:"3px 9px" }}>
                   <span style={{ fontSize:9, fontWeight:600, color:execEffCol, fontFamily:G.fontDisplay, letterSpacing:"0.06em" }}>{execEffStatus}</span>
                 </div>
-                <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:4 }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
-                    <span style={{ color:G.textSec }}>Executed R</span>
-                    <span style={{ color:pColor(execR), fontFamily:G.fontMono, fontWeight:600 }}>{fmtR(execR)}</span>
-                  </div>
-                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
-                    <span style={{ color:G.textSec }}>Missed R</span>
-                    <span style={{ color:pColor(missedR), fontFamily:G.fontMono, fontWeight:600 }}>{fmtR(missedR)}</span>
-                  </div>
-                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, paddingTop:6, borderTop:`1px solid ${G.border}` }}>
-                    <span style={{ color:G.textSec }}>Total Available R</span>
-                    <span style={{ color:G.textPrimary, fontFamily:G.fontMono, fontWeight:600 }}>{fmtR(totalAvailR)}</span>
-                  </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:5, marginTop:2 }}>
+                  {[["Executed R", fmtR(execR), pColor(execR)],["Missed R", fmtR(missedR), pColor(missedR)],["Total Available", fmtR(totalAvailR), G.textPrimary]].map(([l,v,c])=>(
+                    <div key={l} style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
+                      <span style={{ color:G.textSec }}>{l}</span>
+                      <span style={{ color:c, fontFamily:G.fontMono, fontWeight:600 }}>{v}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
 
-            </div>
-
-            {/* Row 2: Cost of Inaction + Cost of Overtrading */}
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:12, marginBottom:12 }}>
-
               {/* Cost of Inaction */}
-              <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:12 }}>
-                <SectionHeader title="Cost of Inaction"/>
-                <div style={{ fontSize:32, fontWeight:800, fontFamily:G.fontUI, color:coiR>0?G.red:coiR<0?G.accent:G.textMuted, lineHeight:1, letterSpacing:"-0.04em" }}>
-                  {coiR>0?`+${coiR.toFixed(2)}R Perdidos`:coiR<0?`${coiR.toFixed(2)}R Ahorrados`:"0.00R"}
+              <div style={{ background:G.surface, padding:"18px 16px", display:"flex", flexDirection:"column", gap:8 }}>
+                <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase" }}>Cost of Inaction</div>
+                <div style={{ fontSize:22, fontWeight:800, fontFamily:G.fontUI, color:coiR>0?G.red:coiR<0?G.accent:G.textMuted, lineHeight:1.1, letterSpacing:"-0.03em" }}>
+                  {coiR>0?`+${coiR.toFixed(1)}R Perdidos`:coiR<0?`${coiR.toFixed(1)}R Ahorrados`:"0R"}
                 </div>
-                <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:4 }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
-                    <span style={{ color:G.textSec }}>Missed Valid Trades</span>
-                    <span style={{ color:G.textPrimary, fontFamily:G.fontMono, fontWeight:600 }}>{coiCount}</span>
-                  </div>
-                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
-                    <span style={{ color:G.textSec }}>Avg Missed Trade R</span>
-                    <span style={{ color:pColor(parseFloat(coiAvg)), fontFamily:G.fontMono, fontWeight:600 }}>{fmtR(parseFloat(coiAvg))}</span>
-                  </div>
-                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
-                    <span style={{ color:G.textSec }}>Largest Missed Winner</span>
-                    <span style={{ color:G.accent, fontFamily:G.fontMono, fontWeight:600 }}>{coiBigWin!==null?`+${coiBigWin.toFixed(2)}R`:"—"}</span>
-                  </div>
-                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
-                    <span style={{ color:G.textSec }}>Largest Missed Loser</span>
-                    <span style={{ color:G.red, fontFamily:G.fontMono, fontWeight:600 }}>{coiBigLoss!==null?`${coiBigLoss.toFixed(2)}R`:"—"}</span>
-                  </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:5, marginTop:2 }}>
+                  {[["Missed Valid",`${coiCount}`,G.textPrimary],["Avg Missed R",fmtR(parseFloat(coiAvg)),pColor(parseFloat(coiAvg))],["Best Missed",coiBigWin!==null?`+${coiBigWin.toFixed(1)}R`:"—",G.accent],["Worst Missed",coiBigLoss!==null?`${coiBigLoss.toFixed(1)}R`:"—",G.red]].map(([l,v,c])=>(
+                    <div key={l} style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
+                      <span style={{ color:G.textSec }}>{l}</span>
+                      <span style={{ color:c, fontFamily:G.fontMono, fontWeight:600 }}>{v}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
 
               {/* Cost of Overtrading */}
-              <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:12 }}>
-                <SectionHeader title="Cost of Overtrading"/>
-                <div style={{ fontSize:32, fontWeight:800, fontFamily:G.fontUI, color:pColor(-cotR), lineHeight:1, letterSpacing:"-0.04em" }}>
-                  {cotR<0?`${cotR.toFixed(2)}R Perdidos`:cotR>0?`+${cotR.toFixed(2)}R Off-Plan`:"0.00R"}
+              <div style={{ background:G.surface, padding:"18px 16px", display:"flex", flexDirection:"column", gap:8 }}>
+                <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase" }}>Cost of Overtrading</div>
+                <div style={{ fontSize:22, fontWeight:800, fontFamily:G.fontUI, color:cotR<0?G.red:cotR>0?G.yellow:G.textMuted, lineHeight:1.1, letterSpacing:"-0.03em" }}>
+                  {cotR<0?`${cotR.toFixed(1)}R Perdidos`:cotR>0?`+${cotR.toFixed(1)}R Off-Plan`:"0R"}
                 </div>
-                <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:4 }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
-                    <span style={{ color:G.textSec }}>Invalid Trades Executed</span>
-                    <span style={{ color:G.textPrimary, fontFamily:G.fontMono, fontWeight:600 }}>{cotCount}</span>
-                  </div>
-                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
-                    <span style={{ color:G.textSec }}>Avg Invalid Trade R</span>
-                    <span style={{ color:pColor(parseFloat(cotAvg)), fontFamily:G.fontMono, fontWeight:600 }}>{fmtR(parseFloat(cotAvg))}</span>
-                  </div>
-                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
-                    <span style={{ color:G.textSec }}>Largest Off-Plan Win</span>
-                    <span style={{ color:G.accent, fontFamily:G.fontMono, fontWeight:600 }}>{cotBigWin!==null?`+${cotBigWin.toFixed(2)}R`:"—"}</span>
-                  </div>
-                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
-                    <span style={{ color:G.textSec }}>Largest Off-Plan Loss</span>
-                    <span style={{ color:G.red, fontFamily:G.fontMono, fontWeight:600 }}>{cotBigLoss!==null?`${cotBigLoss.toFixed(2)}R`:"—"}</span>
-                  </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:5, marginTop:2 }}>
+                  {[["Invalid Exec.",`${cotCount}`,G.textPrimary],["Avg Invalid R",fmtR(parseFloat(cotAvg)),pColor(parseFloat(cotAvg))],["Best Off-Plan",cotBigWin!==null?`+${cotBigWin.toFixed(1)}R`:"—",G.accent],["Worst Off-Plan",cotBigLoss!==null?`${cotBigLoss.toFixed(1)}R`:"—",G.red]].map(([l,v,c])=>(
+                    <div key={l} style={{ display:"flex", justifyContent:"space-between", fontSize:10 }}>
+                      <span style={{ color:G.textSec }}>{l}</span>
+                      <span style={{ color:c, fontFamily:G.fontMono, fontWeight:600 }}>{v}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
 
             </div>
+
 
             {/* Executor Profile — Radar */}
             {(()=>{
@@ -3763,8 +3738,8 @@ export default function App() {
                   desc:"Measures adherence to risk management rules. Valid setups represent correct risk behavior." },
               ];
 
-              // Radar SVG
-              const CX=80, CY=80, R=58, N=4;
+              // Radar SVG — larger
+              const SIZE=220, CX=110, CY=110, R=78, N=4;
               const angleOf = i => (i/N)*2*Math.PI - Math.PI/2;
               const pt = (i, r) => ({
                 x: CX + r * Math.cos(angleOf(i)),
@@ -3773,62 +3748,64 @@ export default function App() {
               const rings = [25,50,75,100];
               const polyPts = metrics.map((m,i)=>pt(i, (m.score/100)*R));
               const poly = polyPts.map(p=>`${p.x},${p.y}`).join(" ");
+              const score = Math.round(metrics.reduce((s,m)=>s+m.score,0)/metrics.length);
+              const scoreCol = score>=85?G.accent:score>=65?G.blue:score>=40?G.yellow:G.red;
 
               return (
-                <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12 }}>
+                <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:"18px 18px 14px", marginBottom:12 }}>
                   <SectionHeader title="Executor Profile"/>
-                  {/* Radar centered */}
-                  <div style={{ display:"flex", justifyContent:"center", marginBottom:16 }}>
-                    <svg width={160} height={160} viewBox="0 0 160 160">
+
+                  {/* Radar — full width, centered */}
+                  <div style={{ display:"flex", justifyContent:"center", marginBottom:4 }}>
+                    <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ overflow:"visible" }}>
+                      {/* Ring grid */}
                       {rings.map(pct=>(
                         <polygon key={pct}
                           points={metrics.map((_,i)=>{ const p=pt(i,(pct/100)*R); return `${p.x},${p.y}`; }).join(" ")}
-                          fill="none" stroke={G.border} strokeWidth={pct===100?1.5:0.8}
+                          fill="none" stroke={G.border} strokeWidth={pct===100?1.5:0.7}
                           strokeDasharray={pct===100?"none":"3,3"}/>
                       ))}
+                      {/* Axis lines */}
                       {metrics.map((_,i)=>{
-                        const outer=pt(i,R);
-                        return <line key={i} x1={CX} y1={CY} x2={outer.x} y2={outer.y} stroke={G.border} strokeWidth={0.8}/>;
+                        const o=pt(i,R);
+                        return <line key={i} x1={CX} y1={CY} x2={o.x} y2={o.y} stroke={G.border} strokeWidth={0.7}/>;
                       })}
-                      <polygon points={poly} fill={`${G.blue}28`} stroke={G.blue} strokeWidth={2} strokeLinejoin="round"/>
+                      {/* Data fill */}
+                      <polygon points={poly} fill={`${G.blue}22`} stroke={G.blue} strokeWidth={2.2} strokeLinejoin="round"/>
+                      {/* Colored dots */}
                       {polyPts.map((p,i)=>(
-                        <circle key={i} cx={p.x} cy={p.y} r={3.5}
+                        <circle key={i} cx={p.x} cy={p.y} r={4}
                           fill={metrics[i].color} stroke={G.surface} strokeWidth={1.5}/>
                       ))}
+                      {/* Axis labels */}
                       {metrics.map((m,i)=>{
-                        const lp=pt(i,R+14);
+                        const lp=pt(i,R+16);
                         return(
-                          <text key={i} x={lp.x} y={lp.y+3} textAnchor="middle"
-                            fontSize={7.5} fill={G.textSec} fontFamily={G.fontDisplay}
-                            fontWeight="600">{m.label}</text>
+                          <text key={i} x={lp.x} y={lp.y+4} textAnchor="middle"
+                            fontSize={9} fill={m.color} fontFamily={G.fontDisplay}
+                            fontWeight="700">{m.label}</text>
                         );
                       })}
-                      {[50,100].map(pct=>(
-                        <text key={pct} x={CX+2} y={CY-(pct/100)*R+3}
-                          fontSize={5.5} fill={G.textMuted} fontFamily={G.fontMono} textAnchor="middle">
-                          {pct}
-                        </text>
-                      ))}
                     </svg>
                   </div>
-                  {/* Metrics list below */}
-                  <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+
+                  {/* Score */}
+                  <div style={{ textAlign:"center", marginBottom:16 }}>
+                    <div style={{ fontSize:9, color:G.textMuted, fontFamily:G.fontDisplay, letterSpacing:"0.14em", textTransform:"uppercase", marginBottom:4 }}>Score</div>
+                    <div style={{ fontSize:48, fontWeight:800, fontFamily:G.fontUI, color:scoreCol, lineHeight:1, letterSpacing:"-0.05em" }}>{score}</div>
+                  </div>
+
+                  {/* 2×2 metric grid */}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"1px", background:G.border, borderRadius:8, overflow:"hidden" }}>
                     {metrics.map(m=>(
-                      <div key={m.key} style={{ display:"flex", alignItems:"center", gap:10 }}>
-                        <div style={{ width:3, height:28, borderRadius:2, background:m.color, flexShrink:0 }}/>
-                        <div style={{ flex:1 }}>
-                          <div style={{ display:"flex", alignItems:"center", gap:4, marginBottom:3 }}>
-                            <span style={{ fontSize:10, fontWeight:600, color:G.textPrimary, fontFamily:G.fontDisplay }}>{m.label}</span>
-                            <button onClick={()=>setProfileInfo(m)}
-                              style={{ background:"none", border:"none", cursor:"pointer", fontSize:10, color:G.textMuted, padding:0, lineHeight:1, flexShrink:0 }}>ℹ️</button>
-                          </div>
-                          <div style={{ height:5, background:G.surfaceAlt, borderRadius:3, overflow:"hidden" }}>
-                            <div style={{ height:"100%", width:`${m.score}%`, background:m.color, borderRadius:3, transition:"width 0.5s cubic-bezier(.4,0,.2,1)" }}/>
-                          </div>
+                      <div key={m.key} style={{ background:G.surfaceAlt, padding:"10px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+                          <div style={{ width:3, height:14, borderRadius:2, background:m.color, flexShrink:0 }}/>
+                          <span style={{ fontSize:9, fontWeight:700, color:G.textSec, fontFamily:G.fontDisplay, letterSpacing:"0.08em", textTransform:"uppercase" }}>{m.label}</span>
+                          <button onClick={()=>setProfileInfo(m)}
+                            style={{ background:"none", border:"none", cursor:"pointer", fontSize:9, color:G.textMuted, padding:0, lineHeight:1, flexShrink:0 }}>ℹ️</button>
                         </div>
-                        <div style={{ fontSize:15, fontWeight:700, color:m.color, fontFamily:G.fontUI, letterSpacing:"-0.02em", minWidth:36, textAlign:"right" }}>
-                          {m.score}%
-                        </div>
+                        <span style={{ fontSize:14, fontWeight:700, color:m.color, fontFamily:G.fontMono, letterSpacing:"-0.02em" }}>{m.score}</span>
                       </div>
                     ))}
                   </div>
