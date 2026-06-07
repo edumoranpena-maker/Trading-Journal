@@ -2929,7 +2929,8 @@ export default function App() {
   const [profileInfo,   setProfileInfo]   = useState(null); // { title, formula, desc }
   const [setupModal,    setSetupModal]    = useState(null);
   const [confModal,     setConfModal]     = useState(null);
-  const [validezModal,  setValidezModal]  = useState(null); // { setup, wr, pnl, r, total }
+  const [validezModal,  setValidezModal]  = useState(null);
+  const [rDistModal,    setRDistModal]    = useState(null); // { label, count, pct } // { setup, wr, pnl, r, total }
   const [exportModal,   setExportModal]   = useState(false);
   const [importModal,   setImportModal]   = useState(false);
   const [importConfirm, setImportConfirm] = useState(null); // { trades, source }
@@ -3553,6 +3554,110 @@ export default function App() {
                 </div>
               </div>
             </div>
+            {/* R Distribution + System Insight */}
+            {(()=>{
+              const sysT = analTrades.filter(t=>t.validez>=3);
+              const total = sysT.length;
+
+              // Bucket each trade exactly once
+              const buckets = { Loss:0, BE:0, "1R":0, "2R":0, "3R":0, "4R":0, "5R+":0 };
+              sysT.forEach(t=>{
+                const r = t.rr;
+                if(r < -0.05)          buckets["Loss"]++;
+                else if(r <= 0.05)     buckets["BE"]++;
+                else if(r < 1.95)      buckets["1R"]++;
+                else if(r < 2.95)      buckets["2R"]++;
+                else if(r < 3.95)      buckets["3R"]++;
+                else if(r < 4.95)      buckets["4R"]++;
+                else                   buckets["5R+"]++;
+              });
+
+              const CATS = ["Loss","BE","1R","2R","3R","4R","5R+"];
+              const CAT_COLS = {
+                "Loss": G.red,
+                "BE":   G.textMuted,
+                "1R":   "#60a5fa",
+                "2R":   "#34d399",
+                "3R":   G.accent,
+                "4R":   "#a78bfa",
+                "5R+":  G.yellow,
+              };
+
+              const rows = CATS.map(label=>{
+                const count = buckets[label];
+                const pct   = total>0 ? (count/total)*100 : 0;
+                return { label, count, pct };
+              });
+              const maxPct = Math.max(...rows.map(r=>r.pct), 1);
+
+              // System Insight
+              const sW   = sysT.filter(t=>getResult(t)==="Win");
+              const sL   = sysT.filter(t=>getResult(t)==="Loss");
+              const sWL  = sW.length+sL.length;
+              const wr   = sWL ? (sW.length/sWL)*100 : 0;
+              const gW   = sW.reduce((s,t)=>s+t.rr,0);
+              const gL   = Math.abs(sL.reduce((s,t)=>s+t.rr,0));
+              const pf   = gL>0 ? gW/gL : null;
+              const exp  = sysT.length ? sysT.reduce((s,t)=>s+t.rr,0)/sysT.length : 0;
+              let peak=0,dd=0,run=0;
+              [...sysT].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(t=>{run+=t.rr;if(run>peak)peak=run;const d=peak-run;if(d>dd)dd=d;});
+              const bigWins  = rows.find(r=>r.label==="5R+")||{pct:0};
+              const losses   = rows.find(r=>r.label==="Loss")||{pct:0};
+
+              const insight = (()=>{
+                if(!sysT.length) return "Sin datos suficientes para evaluar el sistema en este período.";
+                if(exp>=0.5 && pf!==null && pf>=1.5 && wr>=50)
+                  return "The system maintains a solid statistical edge. Profitability appears consistent and supported by healthy performance characteristics rather than isolated outcomes.";
+                if(exp>0 && bigWins.pct>20)
+                  return "The system remains profitable, although current results rely more heavily on a smaller number of high-performing trades. Edge sustainability should be monitored.";
+                if(exp>=0.3 && dd<3 && losses.pct<30)
+                  return "The system continues to generate positive returns with a balanced risk profile, suggesting a stable and sustainable edge.";
+                if(exp>0 && pf!==null && pf<1.3)
+                  return "The system's statistical advantage appears weaker during this period, reducing the margin for execution errors. Focus on setup quality.";
+                if(exp<=0)
+                  return "The system is currently operating below breakeven. Prioritize reviewing setup validity and avoid expanding risk until the edge is re-established.";
+                return "The system shows a moderate edge. Results are within expected range, though consistency across different trade outcomes could be improved.";
+              })();
+
+              return (
+                <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12 }}>
+                  <SectionHeader title="R Distribution"/>
+
+                  {/* Heatmap */}
+                  {total===0
+                    ? <div style={{ color:G.textMuted, fontSize:11, textAlign:"center", padding:"18px 0" }}>Sin datos</div>
+                    : <div style={{ display:"grid", gridTemplateColumns:`repeat(${CATS.length},1fr)`, gap:3, marginBottom:16 }}>
+                        {rows.map(row=>{
+                          const intensity = row.pct/maxPct;
+                          const col = CAT_COLS[row.label];
+                          return(
+                            <button key={row.label} onClick={()=>setRDistModal(row)}
+                              style={{ border:"none", cursor:"pointer", borderRadius:6, padding:"10px 4px", display:"flex", flexDirection:"column", alignItems:"center", gap:4,
+                                background:`color-mix(in srgb, ${col} ${Math.round(intensity*60+10)}%, ${G.surfaceAlt})`,
+                                outline:`1px solid ${col}${Math.round(intensity*180+40).toString(16).padStart(2,"0")}`,
+                                transition:"all 0.2s" }}>
+                              <span style={{ fontSize:8, fontWeight:700, color:G.textSec, fontFamily:G.fontDisplay, letterSpacing:"0.08em", textTransform:"uppercase" }}>{row.label}</span>
+                              <span style={{ fontSize:13, fontWeight:800, color:intensity>0.5?col:G.textSec, fontFamily:G.fontMono, letterSpacing:"-0.02em" }}>
+                                {row.pct>0?`${row.pct.toFixed(0)}%`:"—"}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                  }
+
+                  {/* System Insight */}
+                  <div style={{ background:`${G.accent}0a`, border:`1px solid ${G.accent}30`, borderRadius:9, padding:"12px 14px", display:"flex", gap:10, alignItems:"flex-start" }}>
+                    <span style={{ fontSize:14, flexShrink:0 }}>📊</span>
+                    <div>
+                      <div style={{ fontSize:9, color:G.accent, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:4 }}>System Insight</div>
+                      <div style={{ fontSize:11, color:G.textPrimary, lineHeight:1.65 }}>{insight}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Mejor / Peor */}
             <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:32 }}>
               <div style={{ fontSize:9, color:G.textSec, letterSpacing:"0.14em", textTransform:"uppercase", marginBottom:14, fontFamily:G.fontDisplay }}>{T("MEJOR / PEOR — basado en win rate histórico (todos los datos)")}</div>
@@ -4050,6 +4155,28 @@ export default function App() {
         {tab === "reportes" && <ReportesTab trades={trades} setExportModal={setExportModal} setImportModal={setImportModal} importFeedback={importFeedback} setImportFeedback={setImportFeedback}/>}
 
       </main>
+
+      {/* ── R DISTRIBUTION MODAL ── */}
+      {rDistModal && (
+        <div onClick={()=>setRDistModal(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:9900, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+          <div onClick={e=>e.stopPropagation()} style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:12, padding:24, width:"100%", maxWidth:260 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+              <span style={{ fontSize:16, fontWeight:700, fontFamily:G.fontDisplay, color:G.textPrimary }}>{rDistModal.label}</span>
+              <button onClick={()=>setRDistModal(null)} style={{ background:"none", border:"none", color:G.textMuted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>
+            </div>
+            <div style={{ textAlign:"center", padding:"16px 0", background:G.surfaceAlt, borderRadius:9, marginBottom:12 }}>
+              <div style={{ fontSize:42, fontWeight:800, fontFamily:G.fontMono, color:G.textPrimary, lineHeight:1, letterSpacing:"-0.04em" }}>
+                {rDistModal.pct.toFixed(0)}%
+              </div>
+              <div style={{ fontSize:10, color:G.textMuted, marginTop:6 }}>of total trades</div>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 12px", background:G.surfaceAlt, borderRadius:8 }}>
+              <span style={{ fontSize:11, color:G.textSec, fontFamily:G.fontDisplay }}>Trades</span>
+              <span style={{ fontSize:16, fontWeight:700, color:G.textPrimary, fontFamily:G.fontMono }}>{rDistModal.count}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── SETUP DETAIL MODAL ── */}
       {setupModal && (
