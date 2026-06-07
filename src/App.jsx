@@ -3559,38 +3559,29 @@ export default function App() {
               const sysT = analTrades.filter(t=>t.validez>=3);
               const total = sysT.length;
 
-              // Bucket each trade exactly once
-              const buckets = { Loss:0, BE:0, "1R":0, "2R":0, "3R":0, "4R":0, "5R+":0 };
+              // 8 fixed buckets — each trade counted exactly once
+              const CATS = ["-2R","-1R","BE","+1R","+2R","+3R","+4R","+5R+"];
+              const counts = Object.fromEntries(CATS.map(c=>[c,0]));
               sysT.forEach(t=>{
                 const r = t.rr;
-                if(r < -0.05)          buckets["Loss"]++;
-                else if(r <= 0.05)     buckets["BE"]++;
-                else if(r < 1.95)      buckets["1R"]++;
-                else if(r < 2.95)      buckets["2R"]++;
-                else if(r < 3.95)      buckets["3R"]++;
-                else if(r < 4.95)      buckets["4R"]++;
-                else                   buckets["5R+"]++;
+                if      (r <= -1.5)          counts["-2R"]++;
+                else if (r <= -0.5)          counts["-1R"]++;
+                else if (r > -0.5 && r < 0.5) counts["BE"]++;
+                else if (r <  1.5)           counts["+1R"]++;
+                else if (r <  2.5)           counts["+2R"]++;
+                else if (r <  3.5)           counts["+3R"]++;
+                else if (r <  4.5)           counts["+4R"]++;
+                else                         counts["+5R+"]++;
               });
 
-              const CATS = ["Loss","BE","1R","2R","3R","4R","5R+"];
-              const CAT_COLS = {
-                "Loss": G.red,
-                "BE":   G.textMuted,
-                "1R":   "#60a5fa",
-                "2R":   "#34d399",
-                "3R":   G.accent,
-                "4R":   "#a78bfa",
-                "5R+":  G.yellow,
-              };
-
-              const rows = CATS.map(label=>{
-                const count = buckets[label];
-                const pct   = total>0 ? (count/total)*100 : 0;
-                return { label, count, pct };
-              });
+              const rows = CATS.map(label=>({
+                label,
+                count: counts[label],
+                pct:   total>0 ? (counts[label]/total)*100 : 0,
+              }));
               const maxPct = Math.max(...rows.map(r=>r.pct), 1);
 
-              // System Insight
+              // Insight metrics
               const sW   = sysT.filter(t=>getResult(t)==="Win");
               const sL   = sysT.filter(t=>getResult(t)==="Loss");
               const sWL  = sW.length+sL.length;
@@ -3601,16 +3592,16 @@ export default function App() {
               const exp  = sysT.length ? sysT.reduce((s,t)=>s+t.rr,0)/sysT.length : 0;
               let peak=0,dd=0,run=0;
               [...sysT].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(t=>{run+=t.rr;if(run>peak)peak=run;const d=peak-run;if(d>dd)dd=d;});
-              const bigWins  = rows.find(r=>r.label==="5R+")||{pct:0};
-              const losses   = rows.find(r=>r.label==="Loss")||{pct:0};
+              const bigWins = (counts["+5R+"]||0)/Math.max(total,1)*100;
+              const lossRate= (counts["-1R"]+counts["-2R"])/Math.max(total,1)*100;
 
               const insight = (()=>{
-                if(!sysT.length) return "Sin datos suficientes para evaluar el sistema en este período.";
+                if(!total) return "Sin datos suficientes para evaluar el sistema en este período.";
                 if(exp>=0.5 && pf!==null && pf>=1.5 && wr>=50)
                   return "The system maintains a solid statistical edge. Profitability appears consistent and supported by healthy performance characteristics rather than isolated outcomes.";
-                if(exp>0 && bigWins.pct>20)
+                if(exp>0 && bigWins>20)
                   return "The system remains profitable, although current results rely more heavily on a smaller number of high-performing trades. Edge sustainability should be monitored.";
-                if(exp>=0.3 && dd<3 && losses.pct<30)
+                if(exp>=0.3 && dd<3 && lossRate<30)
                   return "The system continues to generate positive returns with a balanced risk profile, suggesting a stable and sustainable edge.";
                 if(exp>0 && pf!==null && pf<1.3)
                   return "The system's statistical advantage appears weaker during this period, reducing the margin for execution errors. Focus on setup quality.";
@@ -3619,43 +3610,49 @@ export default function App() {
                 return "The system shows a moderate edge. Results are within expected range, though consistency across different trade outcomes could be improved.";
               })();
 
-              return (
+              return (<>
+                {/* R Distribution — true blue heatmap */}
                 <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12 }}>
                   <SectionHeader title="R Distribution"/>
-
-                  {/* Heatmap */}
                   {total===0
                     ? <div style={{ color:G.textMuted, fontSize:11, textAlign:"center", padding:"18px 0" }}>Sin datos</div>
-                    : <div style={{ display:"grid", gridTemplateColumns:`repeat(${CATS.length},1fr)`, gap:3, marginBottom:16 }}>
+                    : <div style={{ display:"grid", gridTemplateColumns:`repeat(${CATS.length},1fr)`, gap:3 }}>
                         {rows.map(row=>{
-                          const intensity = row.pct/maxPct;
-                          const col = CAT_COLS[row.label];
+                          const t = row.pct/maxPct; // 0–1 intensity
+                          // Blue scale: low = near-transparent dark blue, high = vivid blue
+                          const alpha = Math.round((t*0.75+0.12)*255).toString(16).padStart(2,"0");
+                          const bg = `#3b82f6${alpha}`;
+                          const textCol = t>0.5?"#ffffff":"#93c5fd";
                           return(
                             <button key={row.label} onClick={()=>setRDistModal(row)}
-                              style={{ border:"none", cursor:"pointer", borderRadius:6, padding:"10px 4px", display:"flex", flexDirection:"column", alignItems:"center", gap:4,
-                                background:`color-mix(in srgb, ${col} ${Math.round(intensity*60+10)}%, ${G.surfaceAlt})`,
-                                outline:`1px solid ${col}${Math.round(intensity*180+40).toString(16).padStart(2,"0")}`,
-                                transition:"all 0.2s" }}>
-                              <span style={{ fontSize:8, fontWeight:700, color:G.textSec, fontFamily:G.fontDisplay, letterSpacing:"0.08em", textTransform:"uppercase" }}>{row.label}</span>
-                              <span style={{ fontSize:13, fontWeight:800, color:intensity>0.5?col:G.textSec, fontFamily:G.fontMono, letterSpacing:"-0.02em" }}>
-                                {row.pct>0?`${row.pct.toFixed(0)}%`:"—"}
+                              style={{ border:"none", cursor:row.count>0?"pointer":"default", borderRadius:6, padding:"12px 4px",
+                                display:"flex", flexDirection:"column", alignItems:"center", gap:5,
+                                background:bg, transition:"opacity 0.2s",
+                                outline:`1px solid #3b82f6${Math.round((t*0.6+0.1)*255).toString(16).padStart(2,"0")}` }}>
+                              <span style={{ fontSize:8, fontWeight:700, color:t>0.4?"#bfdbfe":"#64748b",
+                                fontFamily:G.fontDisplay, letterSpacing:"0.08em", textTransform:"uppercase" }}>
+                                {row.label}
+                              </span>
+                              <span style={{ fontSize:14, fontWeight:800, color:textCol,
+                                fontFamily:G.fontMono, letterSpacing:"-0.02em" }}>
+                                {row.pct>0?`${Math.round(row.pct)}%`:"—"}
                               </span>
                             </button>
                           );
                         })}
                       </div>
                   }
+                </div>
 
-                  {/* System Insight */}
-                  <div style={{ background:`${G.accent}0a`, border:`1px solid ${G.accent}30`, borderRadius:9, padding:"12px 14px", display:"flex", gap:10, alignItems:"flex-start" }}>
-                    <span style={{ fontSize:14, flexShrink:0 }}>📊</span>
-                    <div>
-                      <div style={{ fontSize:9, color:G.accent, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:4 }}>System Insight</div>
-                      <div style={{ fontSize:11, color:G.textPrimary, lineHeight:1.65 }}>{insight}</div>
-                    </div>
+                {/* System Insight — standalone card */}
+                <div style={{ background:`${G.accent}0a`, border:`1px solid ${G.accent}30`, borderRadius:10, padding:"14px 18px", marginBottom:12, display:"flex", gap:12, alignItems:"flex-start" }}>
+                  <span style={{ fontSize:16, flexShrink:0, marginTop:1 }}>📊</span>
+                  <div>
+                    <div style={{ fontSize:9, color:G.accent, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:4 }}>System Insight</div>
+                    <div style={{ fontSize:12, color:G.textPrimary, lineHeight:1.65 }}>{insight}</div>
                   </div>
                 </div>
-              );
+              </>);
             })()}
 
             {/* Mejor / Peor */}
