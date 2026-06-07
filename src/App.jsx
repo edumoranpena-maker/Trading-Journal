@@ -458,11 +458,38 @@ function buildPeriodOptions(tf, trades) {
   return [{id:"alltime",label:"All‑Time"}];
 }
 
-function wrScore(wins,losses,sumR){const wl=wins+losses;if(wl===0)return -1+(sumR*0.001); // BE-only: below any real WR, sumR as micro tiebreaker
-  return(wins/wl)*100;}
-function statsByDayOfWeek(trades){
-  const m={};trades.filter(t=>t.ejecutado).forEach(t=>{const dow=parseLocalDate(t.date).getDay();if(!m[dow])m[dow]={label:DIAS_ES[dow],wins:0,losses:0,sumR:0};const r=getResult(t);if(r==="Win")m[dow].wins++;else if(r==="Loss")m[dow].losses++;m[dow].sumR+=t.rr;});
-  return Object.values(m).map(v=>{const wl=v.wins+v.losses;return{label:v.label,count:v.wins+v.losses,wr:wl?((v.wins/wl)*100).toFixed(0):0,score:wrScore(v.wins,v.losses,v.sumR),sumR:v.sumR};}).sort((a,b)=>b.score!==a.score?b.score-a.score:b.sumR-a.sumR);
+// Comparator for ranking periods: higher WR = better.
+// Tiebreaks: 1) Total R (sumR), 2) Profit ($, sumPnl), 3) Trade count.
+function periodCmp(a, b) {
+  if (b.wr !== a.wr) return b.wr - a.wr;
+  if (b.sumR !== a.sumR) return b.sumR - a.sumR;
+  if (b.sumPnl !== a.sumPnl) return b.sumPnl - a.sumPnl;
+  return b.count - a.count;
+}
+// Build a stats object for a period bucket. Returns null if the period has no
+// wins or losses (only breakevens or zero trades) — excluded from Best/Worst.
+function buildPeriodStats(label, wins, losses, sumR, sumPnl, totalTrades) {
+  const wl = wins + losses;
+  if (wl === 0) return null;
+  const wr = (wins / wl) * 100;
+  return { label, wins, losses, count: totalTrades, wr, sumR, sumPnl };
+}
+function statsByDayOfWeek(trades) {
+  const m = {};
+  trades.filter(t => t.ejecutado).forEach(t => {
+    const dow = parseLocalDate(t.date).getDay();
+    if (!m[dow]) m[dow] = { label: DIAS_ES[dow], wins: 0, losses: 0, sumR: 0, sumPnl: 0, total: 0 };
+    const r = getResult(t);
+    if (r === "Win")       m[dow].wins++;
+    else if (r === "Loss") m[dow].losses++;
+    m[dow].sumR   += t.rr;
+    m[dow].sumPnl += (t.pnl ?? 0);
+    m[dow].total++;
+  });
+  return Object.values(m)
+    .map(v => buildPeriodStats(v.label, v.wins, v.losses, v.sumR, v.sumPnl, v.total))
+    .filter(Boolean)
+    .sort(periodCmp);
 }
 function statsByWeekOfMonth(trades){
   // Assign each trade date to a "week slot" 1-4 within its month.
@@ -491,12 +518,14 @@ function statsByWeekOfMonth(trades){
     const s = getSlot(t.date);
     if (!s) return;
     const k = s.monStr;
-    if (!buckets[k]) buckets[k] = { yr:s.yr, mo:s.mo, slot:s.slot, tradeDays: new Set(), wins:0, losses:0, sumR:0 };
+    if (!buckets[k]) buckets[k] = { yr:s.yr, mo:s.mo, slot:s.slot, tradeDays: new Set(), wins:0, losses:0, sumR:0, sumPnl:0, total:0 };
     buckets[k].tradeDays.add(t.date);
     const r = getResult(t);
     if (r === "Win")  buckets[k].wins++;
     else if (r === "Loss") buckets[k].losses++;
-    buckets[k].sumR += t.rr;
+    buckets[k].sumR   += t.rr;
+    buckets[k].sumPnl += (t.pnl ?? 0);
+    buckets[k].total++;
   });
 
   // For each (yr, mo), determine which slots are "short" (< 3 distinct trade days)
@@ -564,21 +593,37 @@ function statsByWeekOfMonth(trades){
       const tgt = targetSlot[k];
       const label = slotLabel[tgt];
       const mk2 = `${b.yr}-${b.mo}-${label}`;
-      if (!merged[mk2]) merged[mk2] = { label, wins:0, losses:0, sumR:0 };
+      if (!merged[mk2]) merged[mk2] = { label, wins:0, losses:0, sumR:0, sumPnl:0, total:0 };
       merged[mk2].wins   += b.wins;
       merged[mk2].losses += b.losses;
       merged[mk2].sumR   += b.sumR;
+      merged[mk2].sumPnl += b.sumPnl;
+      merged[mk2].total  += b.total;
     });
   });
 
-  return Object.values(merged).map(v => {
-    const wl = v.wins + v.losses;
-    return { label:v.label, count:wl, wr: wl ? ((v.wins/wl)*100).toFixed(0) : 0, score: wrScore(v.wins, v.losses, v.sumR), sumR:v.sumR };
-  }).sort((a, b) => b.score!==a.score ? b.score-a.score : b.sumR-a.sumR);
+  return Object.values(merged)
+    .map(v => buildPeriodStats(v.label, v.wins, v.losses, v.sumR, v.sumPnl, v.total))
+    .filter(Boolean)
+    .sort(periodCmp);
 }
-function statsByMonth(trades){
-  const m={};trades.filter(t=>t.ejecutado).forEach(t=>{const mon=parseLocalDate(t.date).getMonth();const k=MESES_ES[mon];if(!m[k])m[k]={label:k,wins:0,losses:0,sumR:0};const r=getResult(t);if(r==="Win")m[k].wins++;else if(r==="Loss")m[k].losses++;m[k].sumR+=t.rr;});
-  return Object.values(m).map(v=>{const wl=v.wins+v.losses;return{label:v.label,count:wl,wr:wl?((v.wins/wl)*100).toFixed(0):0,score:wrScore(v.wins,v.losses,v.sumR),sumR:v.sumR};}).sort((a,b)=>b.score!==a.score?b.score-a.score:b.sumR-a.sumR);
+function statsByMonth(trades) {
+  const m = {};
+  trades.filter(t => t.ejecutado).forEach(t => {
+    const mon = parseLocalDate(t.date).getMonth();
+    const k = MESES_ES[mon];
+    if (!m[k]) m[k] = { label: k, wins: 0, losses: 0, sumR: 0, sumPnl: 0, total: 0 };
+    const r = getResult(t);
+    if (r === "Win")       m[k].wins++;
+    else if (r === "Loss") m[k].losses++;
+    m[k].sumR   += t.rr;
+    m[k].sumPnl += (t.pnl ?? 0);
+    m[k].total++;
+  });
+  return Object.values(m)
+    .map(v => buildPeriodStats(v.label, v.wins, v.losses, v.sumR, v.sumPnl, v.total))
+    .filter(Boolean)
+    .sort(periodCmp);
 }
 
 function getMentalPolarity(val) {
@@ -674,16 +719,25 @@ function KpiCard({ label, val, sub, col, tag }) {
 }
 
 function BWCard({ label, arr, best }) {
-  const item = best ? arr[0] : arr[arr.length - 1];
-  const col  = best ? G.accent : G.red;
+  // Best = highest WR (arr[0] after sort desc). Worst = lowest WR (arr[arr.length-1]).
+  // If only 1 period exists, show it for Best but show "Sin datos" for Worst
+  // (can't be simultaneously best and worst).
+  let item;
+  if (best) {
+    item = arr.length > 0 ? arr[0] : null;
+  } else {
+    item = arr.length > 1 ? arr[arr.length - 1] : null;
+  }
+  const col = best ? G.accent : G.red;
+  const wrDisplay = item ? Math.round(item.wr) + "%" : null;
   return (
     <div style={{ background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:8, padding:"12px 14px" }}>
       <div style={{ fontSize:9, color:G.textSec, letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:6, fontFamily:G.fontDisplay }}>{label}</div>
       {item ? (
         <>
           <div style={{ fontSize:12, fontWeight:600, fontFamily:G.fontDisplay, color:G.textPrimary, marginBottom:2 }}>{item.label}</div>
-          <div style={{ fontSize:13, fontWeight:700, color:col }}>{item.wr}% WR</div>
-          <div style={{ fontSize:9, color:G.textSec }}>{item.count} trades</div>
+          <div style={{ fontSize:13, fontWeight:700, color:col }}>{wrDisplay} WR</div>
+          <div style={{ fontSize:9, color:G.textSec }}>{item.count} trades · {item.wins}W {item.losses}L</div>
         </>
       ) : <div style={{ color:G.textMuted, fontSize:11 }}>Sin datos</div>}
     </div>
