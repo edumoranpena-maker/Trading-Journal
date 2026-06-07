@@ -719,7 +719,7 @@ function KpiCard({ label, val, sub, col, tag }) {
 }
 
 function ExecutionAlignment({ analTrades, G }) {
-  const W = 600, H = 180, PAD = { t:14, r:16, b:32, l:42 };
+  const W = 600, H = 360, PAD = { t:14, r:16, b:32, l:42 };
   const chartW = W - PAD.l - PAD.r;
   const chartH = H - PAD.t - PAD.b;
 
@@ -803,16 +803,14 @@ function ExecutionAlignment({ analTrades, G }) {
 
   return (
     <div style={{ marginBottom:28 }}>
-      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14 }}>
-        <div style={{ width:3, height:18, background:`linear-gradient(180deg,${G.blue},${G.accent})`, borderRadius:2 }}/>
-        <span style={{ fontSize:13, fontWeight:700, fontFamily:G.fontDisplay, letterSpacing:"-0.01em" }}>Execution Alignment</span>
-        <div style={{ flex:1, height:1, background:G.border, marginLeft:4 }}/>
+      <div style={{ fontSize:11, fontWeight:600, color:G.textSec, fontFamily:G.fontDisplay, letterSpacing:"0.04em", marginBottom:12, paddingLeft:2 }}>
+        Execution Alignment
       </div>
 
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:12 }}>
         {[
-          { label:"System Total R",  val:`${sysTotalR>=0?"+":""}${sysTotalR.toFixed(2)}R`,  col: sysTotalR>=0 ? G.blue : G.red },
-          { label:"Executor Total R", val:`${execTotalR>=0?"+":""}${execTotalR.toFixed(2)}R`, col: execTotalR>=0 ? G.accent : G.red },
+          { label:"System Total R",  val:`${sysTotalR>=0?"+":""}${sysTotalR.toFixed(2)}R`,  col: sysTotalR>=0 ? G.accent : G.red },
+          { label:"Executor Total R", val:`${execTotalR>=0?"+":""}${execTotalR.toFixed(2)}R`, col: execTotalR>=0 ? G.blue : G.red },
           { label:"Alignment",        val:`${alignment.toFixed(1)}%`,                          col: alignColor },
         ].map(m => (
           <div key={m.label} style={{ background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:8, padding:"10px 12px" }}>
@@ -824,7 +822,7 @@ function ExecutionAlignment({ analTrades, G }) {
 
       <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:"14px 14px 10px" }}>
         <div style={{ display:"flex", gap:16, marginBottom:10, paddingLeft:4 }}>
-          {[{col:G.blue,label:"Sistema (válidos)"},{col:G.accent,label:"Ejecutor"}].map(l => (
+          {[{col:G.accent,label:"Sistema (válidos)"},{col:G.blue,label:"Ejecutor"}].map(l => (
             <div key={l.label} style={{ display:"flex", alignItems:"center", gap:6 }}>
               <div style={{ width:14, height:2, borderRadius:1, background:l.col }}/>
               <span style={{ fontSize:9, color:G.textSec, fontFamily:G.fontDisplay }}>{l.label}</span>
@@ -851,10 +849,8 @@ function ExecutionAlignment({ analTrades, G }) {
                 ))}
                 <line x1={PAD.l} y1={zero_y+PAD.t} x2={PAD.l+chartW} y2={zero_y+PAD.t}
                   stroke={G.border} strokeWidth="1" opacity="0.9"/>
-                <path d={makeArea("sysR")}  fill={G.blue}   opacity="0.07"/>
-                <path d={makeArea("execR")} fill={G.accent} opacity="0.09"/>
-                <path d={makePath("sysR")}  fill="none" stroke={G.blue}   strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" opacity="0.85"/>
-                <path d={makePath("execR")} fill="none" stroke={G.accent} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round"/>
+                <path d={makePath("sysR")}  fill="none" stroke={G.accent} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" opacity="0.9"/>
+                <path d={makePath("execR")} fill="none" stroke={G.blue}   strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" opacity="0.9"/>
                 {xLabelIdxs.map(i => (
                   <text key={i} x={xScale(i)+PAD.l} y={H-PAD.b+16}
                     textAnchor="middle" fontSize="8" fill={G.textMuted} fontFamily="DM Mono, monospace">
@@ -864,8 +860,8 @@ function ExecutionAlignment({ analTrades, G }) {
                 {tip && <>
                   <line x1={tip.x} y1={PAD.t} x2={tip.x} y2={PAD.t+chartH}
                     stroke={G.borderHov} strokeWidth="1" strokeDasharray="3,3" opacity="0.8"/>
-                  <circle cx={tip.x} cy={yScale(tip.sysR)+PAD.t}  r="3.5" fill={G.blue}   stroke={G.bg} strokeWidth="1.5"/>
-                  <circle cx={tip.x} cy={yScale(tip.execR)+PAD.t} r="3.5" fill={G.accent} stroke={G.bg} strokeWidth="1.5"/>
+                  <circle cx={tip.x} cy={yScale(tip.sysR)+PAD.t}  r="3.5" fill={G.accent} stroke={G.bg} strokeWidth="1.5"/>
+                  <circle cx={tip.x} cy={yScale(tip.execR)+PAD.t} r="3.5" fill={G.blue}   stroke={G.bg} strokeWidth="1.5"/>
                 </>}
               </svg>
               {tip && (() => {
@@ -880,12 +876,12 @@ function ExecutionAlignment({ analTrades, G }) {
                     boxShadow:"0 6px 24px rgba(0,0,0,0.35)", minWidth:148, zIndex:10 }}>
                     <div style={{ color:G.textSec, marginBottom:5, fontSize:9, letterSpacing:"0.08em", textTransform:"uppercase" }}>{fmtDateShort(tip.date)}</div>
                     <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
-                      <div style={{ width:8, height:2, borderRadius:1, background:G.blue, flexShrink:0 }}/>
+                      <div style={{ width:8, height:2, borderRadius:1, background:G.accent, flexShrink:0 }}/>
                       <span style={{ color:G.textSec }}>Sistema</span>
                       <span style={{ marginLeft:"auto", color:tip.sysR>=0?G.accent:G.red, fontWeight:600 }}>{tip.sysR>=0?"+":""}{tip.sysR.toFixed(2)}R</span>
                     </div>
                     <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                      <div style={{ width:8, height:2, borderRadius:1, background:G.accent, flexShrink:0 }}/>
+                      <div style={{ width:8, height:2, borderRadius:1, background:G.blue, flexShrink:0 }}/>
                       <span style={{ color:G.textSec }}>Ejecutor</span>
                       <span style={{ marginLeft:"auto", color:tip.execR>=0?G.accent:G.red, fontWeight:600 }}>{tip.execR>=0?"+":""}{tip.execR.toFixed(2)}R</span>
                     </div>
@@ -3841,7 +3837,7 @@ export default function App() {
             })()}
 
             {/* Execution Insight */}
-            <div style={{ background:`${G.blue}0e`, border:`1px solid ${G.blue}33`, borderRadius:10, padding:"14px 18px", marginBottom:12, display:"flex", alignItems:"flex-start", gap:12 }}>
+            <div style={{ background:`${G.blue}0e`, border:`1px solid ${G.blue}33`, borderRadius:10, padding:"14px 18px", marginBottom:32, display:"flex", alignItems:"flex-start", gap:12 }}>
               <span style={{ fontSize:16, flexShrink:0, marginTop:1 }}>💡</span>
               <div>
                 <div style={{ fontSize:9, color:G.blue, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:4 }}>Execution Insight</div>
