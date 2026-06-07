@@ -458,7 +458,8 @@ function buildPeriodOptions(tf, trades) {
   return [{id:"alltime",label:"All‑Time"}];
 }
 
-function wrScore(wins,losses,sumR){const wl=wins+losses;if(wl===0)return 50+(sumR*0.01); // solo BEs: score neutro 50%, no -Infinity
+function wrScore(wins,losses,sumR){const wl=wins+losses;if(wl===0)return -1+(sumR*0.001); // BE-only: below any real WR, sumR as micro tiebreaker
+  return(wins/wl)*100;}
   return(wins/wl)*100;}
 function statsByDayOfWeek(trades){
   const m={};trades.filter(t=>t.ejecutado).forEach(t=>{const dow=parseLocalDate(t.date).getDay();if(!m[dow])m[dow]={label:DIAS_ES[dow],wins:0,losses:0,sumR:0};const r=getResult(t);if(r==="Win")m[dow].wins++;else if(r==="Loss")m[dow].losses++;m[dow].sumR+=t.rr;});
@@ -3234,8 +3235,8 @@ export default function App() {
                         <button key={row.label} onClick={()=>setConfModal(row)}
                           style={{ background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left", width:"100%" }}>
                           <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                            <div style={{ width:48, flexShrink:0, fontSize:8, color:G.textSec, fontFamily:G.fontDisplay, textAlign:"right", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
-                              {row.label}
+                            <div style={{ width:36, flexShrink:0, fontSize:8, color:G.textSec, fontFamily:G.fontDisplay, textAlign:"right", whiteSpace:"pre-wrap", wordBreak:"break-word", lineHeight:1.3 }}>
+                              {row.label.replace(/ /g,"\n")}
                             </div>
                             <div style={{ flex:1, height:16, background:G.surfaceAlt, borderRadius:3, overflow:"hidden", position:"relative" }}>
                               <div style={{ position:"absolute", left:0, top:0, bottom:0, width:`${row.wr}%`, background:`linear-gradient(90deg,${col}99,${col}dd)`, borderRadius:3, transition:"width 0.4s cubic-bezier(.4,0,.2,1)" }}/>
@@ -3244,7 +3245,7 @@ export default function App() {
                               {row.wr}%
                             </div>
                           </div>
-                          <div style={{ paddingLeft:54, fontSize:7, color:G.textMuted, fontFamily:G.fontMono, marginTop:1 }}>
+                          <div style={{ paddingLeft:42, fontSize:7, color:G.textMuted, fontFamily:G.fontMono, marginTop:1 }}>
                             {row.wins}W · {row.losses}L
                           </div>
                         </button>
@@ -3270,7 +3271,7 @@ export default function App() {
                       valMap[k].total++; valMap[k].pnl+=t.pnl; valMap[k].r+=t.rr;
                     });
                     const rows = Object.entries(valMap).map(([n,d])=>({
-                      label:`V${n}`, n:parseInt(n), wins:d.wins, losses:d.losses,
+                      label:`${n} Checks`, n:parseInt(n), wins:d.wins, losses:d.losses,
                       total:d.total, pnl:d.pnl, r:d.r,
                       wr:(d.wins+d.losses)>0?Math.round((d.wins/(d.wins+d.losses))*100):0
                     })).sort((a,b)=>b.wr-a.wr);
@@ -3281,7 +3282,7 @@ export default function App() {
                         <button key={row.label} onClick={()=>setValidezModal(row)}
                           style={{ background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left", width:"100%" }}>
                           <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                            <div style={{ width:48, flexShrink:0, fontSize:8, color:G.textSec, fontFamily:G.fontDisplay, textAlign:"right", whiteSpace:"nowrap" }}>
+                            <div style={{ flexShrink:0, fontSize:8, color:G.textSec, fontFamily:G.fontDisplay, whiteSpace:"nowrap" }}>
                               {row.label}
                             </div>
                             <div style={{ flex:1, height:16, background:G.surfaceAlt, borderRadius:3, overflow:"hidden", position:"relative" }}>
@@ -3291,7 +3292,7 @@ export default function App() {
                               {row.wr}%
                             </div>
                           </div>
-                          <div style={{ paddingLeft:54, fontSize:7, color:G.textMuted, fontFamily:G.fontMono, marginTop:1 }}>
+                          <div style={{ fontSize:7, color:G.textMuted, fontFamily:G.fontMono, marginTop:1, textAlign:"right" }}>
                             {row.wins}W · {row.losses}L
                           </div>
                         </button>
