@@ -3764,6 +3764,252 @@ export default function App() {
                 })}
               </div>
 
+            {/* ── Execution Alignment Chart ── */}
+            {(()=>{
+              const sysT  = [...analTrades.filter(t => t.validez >= 3)].sort((a,b) => new Date(a.date) - new Date(b.date));
+              const execT = [...analTrades.filter(t => t.ejecutado)].sort((a,b) => new Date(a.date) - new Date(b.date));
+
+              // Build unified sorted date list and cumulative R series
+              const allDates = [...new Set([...sysT.map(t=>t.date), ...execT.map(t=>t.date)])].sort();
+
+              // Build cumulative series: each entry = { date, sysR, execR }
+              let sysRunning = 0, execRunning = 0;
+              const sysMap  = {};
+              const execMap = {};
+              sysT.forEach(t  => { sysMap[t.date]  = (sysMap[t.date]  || 0) + t.rr; });
+              execT.forEach(t => { execMap[t.date] = (execMap[t.date] || 0) + t.rr; });
+
+              const points = [];
+              // Start at 0
+              if (allDates.length) {
+                allDates.forEach(d => {
+                  if (sysMap[d]  !== undefined) sysRunning  += sysMap[d];
+                  if (execMap[d] !== undefined) execRunning += execMap[d];
+                  // Avoid duplicate dates: overwrite last if same date
+                  if (points.length && points[points.length-1].date === d) {
+                    points[points.length-1] = { date:d, sysR:sysRunning, execR:execRunning };
+                  } else {
+                    points.push({ date:d, sysR:sysRunning, execR:execRunning });
+                  }
+                });
+              }
+
+              const allPoints = [{ date: allDates[0] || "", sysR: 0, execR: 0 }, ...points];
+
+              const sysTotalR   = sysRunning;
+              const execTotalR  = execRunning;
+              const alignment   = sysTotalR > 0 ? Math.min(999, (execTotalR / sysTotalR) * 100) : (execTotalR >= 0 ? 100 : 0);
+              const alignColor  = alignment >= 85 ? G.accent : alignment >= 60 ? G.yellow : G.red;
+
+              // SVG chart dimensions
+              const W = 600, H = 180, PAD = { t:14, r:16, b:32, l:42 };
+              const chartW = W - PAD.l - PAD.r;
+              const chartH = H - PAD.t - PAD.b;
+
+              const allR = allPoints.flatMap(p => [p.sysR, p.execR]);
+              const minR = Math.min(0, ...allR);
+              const maxR = Math.max(0, ...allR);
+              const rangeR = maxR - minR || 1;
+
+              const xScale = (i) => (i / Math.max(1, allPoints.length - 1)) * chartW;
+              const yScale = (r) => chartH - ((r - minR) / rangeR) * chartH;
+
+              const makePath = (key) => {
+                if (!allPoints.length) return "";
+                return allPoints.map((p, i) => `${i === 0 ? "M" : "L"}${(xScale(i) + PAD.l).toFixed(1)},${(yScale(p[key]) + PAD.t).toFixed(1)}`).join(" ");
+              };
+
+              const makeArea = (key, baseY) => {
+                if (!allPoints.length) return "";
+                const pts = allPoints.map((p, i) => `${(xScale(i) + PAD.l).toFixed(1)},${(yScale(p[key]) + PAD.t).toFixed(1)}`);
+                const last = allPoints.length - 1;
+                return `M${PAD.l},${(baseY + PAD.t).toFixed(1)} ` + pts.map((p,i) => (i===0?"L":"L")+p).join(" ") + ` L${(xScale(last) + PAD.l).toFixed(1)},${(baseY + PAD.t).toFixed(1)} Z`;
+              };
+
+              const zero_y = yScale(0);
+
+              // Y axis ticks
+              const yTicks = [];
+              const tickCount = 5;
+              for (let i = 0; i <= tickCount; i++) {
+                const v = minR + (rangeR / tickCount) * i;
+                yTicks.push({ v, y: yScale(v) });
+              }
+
+              // X axis labels (up to 5 evenly spaced dates)
+              const xLabelIdxs = allPoints.length <= 5
+                ? allPoints.map((_,i)=>i)
+                : [0, Math.floor((allPoints.length-1)/4), Math.floor((allPoints.length-1)/2), Math.floor((allPoints.length-1)*3/4), allPoints.length-1];
+              const fmtDateShort = d => {
+                if (!d) return "";
+                const [, m, day] = d.split("-");
+                const months = ["","Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+                return `${parseInt(day)} ${months[parseInt(m)] || m}`;
+              };
+
+              // Tooltip state (managed via SVG hover using refs in a wrapper component)
+              const AlignChart = () => {
+                const [tip, setTip] = React.useState(null);
+                const svgRef = React.useRef(null);
+
+                const handleMove = (e) => {
+                  const svg = svgRef.current;
+                  if (!svg || !allPoints.length) return;
+                  const rect = svg.getBoundingClientRect();
+                  const scaleX = W / rect.width;
+                  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                  const mx = (clientX - rect.left) * scaleX - PAD.l;
+                  const idx = Math.round((mx / chartW) * (allPoints.length - 1));
+                  const clamped = Math.max(0, Math.min(allPoints.length - 1, idx));
+                  setTip({ idx: clamped, x: xScale(clamped) + PAD.l, ...allPoints[clamped] });
+                };
+
+                return (
+                  <div style={{ position:"relative" }}>
+                    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", height:"auto", display:"block", overflow:"visible", cursor:"crosshair" }}
+                      onMouseMove={handleMove} onTouchMove={handleMove}
+                      onMouseLeave={()=>setTip(null)} onTouchEnd={()=>setTip(null)}>
+
+                      {/* Grid lines */}
+                      {yTicks.map((t,i) => (
+                        <g key={i}>
+                          <line x1={PAD.l} y1={t.y + PAD.t} x2={PAD.l + chartW} y2={t.y + PAD.t}
+                            stroke={G.border} strokeWidth="0.5" strokeDasharray="3,4" opacity="0.6"/>
+                          <text x={PAD.l - 5} y={t.y + PAD.t + 3.5} textAnchor="end"
+                            fontSize="8" fill={G.textMuted} fontFamily="DM Mono, monospace">
+                            {t.v >= 0 ? "+" : ""}{t.v.toFixed(1)}R
+                          </text>
+                        </g>
+                      ))}
+
+                      {/* Zero baseline */}
+                      <line x1={PAD.l} y1={zero_y + PAD.t} x2={PAD.l + chartW} y2={zero_y + PAD.t}
+                        stroke={G.border} strokeWidth="1" opacity="0.9"/>
+
+                      {/* Area fills */}
+                      {allPoints.length > 1 && <>
+                        <path d={makeArea("sysR", zero_y)} fill={G.blue} opacity="0.07"/>
+                        <path d={makeArea("execR", zero_y)} fill={G.accent} opacity="0.09"/>
+                      </>}
+
+                      {/* Lines */}
+                      {allPoints.length > 1 && <>
+                        <path d={makePath("sysR")}  fill="none" stroke={G.blue}   strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" opacity="0.85"/>
+                        <path d={makePath("execR")} fill="none" stroke={G.accent} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round"/>
+                      </>}
+
+                      {/* X axis labels */}
+                      {xLabelIdxs.map(i => (
+                        <text key={i} x={xScale(i) + PAD.l} y={H - PAD.b + 16}
+                          textAnchor="middle" fontSize="8" fill={G.textMuted} fontFamily="DM Mono, monospace">
+                          {fmtDateShort(allPoints[i]?.date)}
+                        </text>
+                      ))}
+
+                      {/* Tooltip crosshair */}
+                      {tip && <>
+                        <line x1={tip.x} y1={PAD.t} x2={tip.x} y2={PAD.t + chartH}
+                          stroke={G.borderHov} strokeWidth="1" strokeDasharray="3,3" opacity="0.8"/>
+                        <circle cx={tip.x} cy={yScale(tip.sysR) + PAD.t}  r="3.5" fill={G.blue}   stroke={G.bg} strokeWidth="1.5"/>
+                        <circle cx={tip.x} cy={yScale(tip.execR) + PAD.t} r="3.5" fill={G.accent} stroke={G.bg} strokeWidth="1.5"/>
+                      </>}
+                    </svg>
+
+                    {/* Tooltip box */}
+                    {tip && (()=>{
+                      const tipW = 148, svgRendW = svgRef.current?.getBoundingClientRect().width || W;
+                      const pct = tip.x / W;
+                      const left = Math.min(Math.max(0, pct * 100 - 12), 100 - (tipW / svgRendW * 100));
+                      return (
+                        <div style={{ position:"absolute", top:0, left:`${left}%`, pointerEvents:"none",
+                          background:G.surfaceAlt, border:`1px solid ${G.borderHov}`, borderRadius:8,
+                          padding:"8px 11px", fontSize:10, fontFamily:"DM Mono, monospace",
+                          boxShadow:"0 6px 24px rgba(0,0,0,0.35)", minWidth:148, zIndex:10 }}>
+                          <div style={{ color:G.textSec, marginBottom:5, fontSize:9, letterSpacing:"0.08em", textTransform:"uppercase" }}>{fmtDateShort(tip.date)}</div>
+                          <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
+                            <div style={{ width:8, height:2, borderRadius:1, background:G.blue, flexShrink:0 }}/>
+                            <span style={{ color:G.textSec }}>Sistema</span>
+                            <span style={{ marginLeft:"auto", color:tip.sysR >= 0 ? G.accent : G.red, fontWeight:600 }}>{tip.sysR >= 0 ? "+" : ""}{tip.sysR.toFixed(2)}R</span>
+                          </div>
+                          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                            <div style={{ width:8, height:2, borderRadius:1, background:G.accent, flexShrink:0 }}/>
+                            <span style={{ color:G.textSec }}>Ejecutor</span>
+                            <span style={{ marginLeft:"auto", color:tip.execR >= 0 ? G.accent : G.red, fontWeight:600 }}>{tip.execR >= 0 ? "+" : ""}{tip.execR.toFixed(2)}R</span>
+                          </div>
+                          {tip.sysR !== 0 && (
+                            <div style={{ marginTop:5, paddingTop:5, borderTop:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between" }}>
+                              <span style={{ color:G.textSec }}>Gap</span>
+                              <span style={{ color:G.textMuted }}>{(tip.execR - tip.sysR).toFixed(2)}R</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              };
+
+              return (
+                <div style={{ marginBottom:32 }}>
+                  {/* Section header */}
+                  <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
+                    <div style={{ width:3, height:18, background:`linear-gradient(180deg,${G.blue},${G.accent})`, borderRadius:2 }}/>
+                    <span style={{ fontSize:13, fontWeight:700, fontFamily:G.fontDisplay, letterSpacing:"-0.01em" }}>Execution Alignment</span>
+                    <div style={{ flex:1, height:1, background:G.border, marginLeft:4 }}/>
+                  </div>
+
+                  {/* Header metrics */}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:14 }}>
+                    {[
+                      { label:"System Total R",   val:`${sysTotalR >= 0 ? "+" : ""}${sysTotalR.toFixed(2)}R`,   col: sysTotalR >= 0 ? G.blue : G.red },
+                      { label:"Executor Total R",  val:`${execTotalR >= 0 ? "+" : ""}${execTotalR.toFixed(2)}R`, col: execTotalR >= 0 ? G.accent : G.red },
+                      { label:"Alignment",          val:`${alignment.toFixed(1)}%`,                               col: alignColor },
+                    ].map(m => (
+                      <div key={m.label} style={{ background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:8, padding:"10px 12px" }}>
+                        <div style={{ fontSize:8, color:G.textSec, letterSpacing:"0.1em", textTransform:"uppercase", fontFamily:G.fontDisplay, marginBottom:4 }}>{m.label}</div>
+                        <div style={{ fontSize:15, fontWeight:700, color:m.col, fontFamily:G.fontMono, letterSpacing:"-0.02em" }}>{m.val}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Chart card */}
+                  <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:"16px 14px 10px" }}>
+                    {/* Legend */}
+                    <div style={{ display:"flex", gap:16, marginBottom:12, paddingLeft:4 }}>
+                      {[{ col:G.blue, label:"Sistema (válidos)" }, { col:G.accent, label:"Ejecutor" }].map(l => (
+                        <div key={l.label} style={{ display:"flex", alignItems:"center", gap:6 }}>
+                          <div style={{ width:14, height:2, borderRadius:1, background:l.col }}/>
+                          <span style={{ fontSize:9, color:G.textSec, fontFamily:G.fontDisplay, letterSpacing:"0.06em" }}>{l.label}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {!allPoints.length || allPoints.length < 2
+                      ? <div style={{ color:G.textMuted, fontSize:11, textAlign:"center", padding:"28px 0" }}>Sin datos suficientes para graficar</div>
+                      : <AlignChart/>
+                    }
+
+                    {/* Gap annotation */}
+                    {allPoints.length >= 2 && (
+                      <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${G.border}`, display:"flex", alignItems:"center", gap:8 }}>
+                        <div style={{ width:6, height:6, borderRadius:"50%", background:alignColor, flexShrink:0 }}/>
+                        <span style={{ fontSize:9, color:G.textSec, lineHeight:1.5 }}>
+                          {alignment >= 100
+                            ? "Ejecutor captura todo el edge del sistema — alineación perfecta."
+                            : alignment >= 85
+                            ? `Brecha de ${(sysTotalR - execTotalR).toFixed(2)}R — ejecución muy alineada con el sistema.`
+                            : alignment >= 60
+                            ? `Brecha de ${(sysTotalR - execTotalR).toFixed(2)}R — hay oportunidades de mejora en la ejecución.`
+                            : `Brecha de ${(sysTotalR - execTotalR).toFixed(2)}R — la ejecución está divergiendo significativamente del sistema.`
+                          }
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
               {/* Insight */}
               <div style={{ background:`${G.accent}0a`, border:`1px solid ${G.accent}30`, borderRadius:10, padding:"13px 16px", marginBottom:32, display:"flex", gap:12, alignItems:"flex-start" }}>
                 <span style={{ fontSize:15, flexShrink:0 }}>🔍</span>
