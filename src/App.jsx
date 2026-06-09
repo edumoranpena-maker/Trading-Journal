@@ -2930,7 +2930,9 @@ export default function App() {
   const [setupModal,    setSetupModal]    = useState(null);
   const [confModal,     setConfModal]     = useState(null);
   const [validezModal,  setValidezModal]  = useState(null);
-  const [rDistModal,    setRDistModal]    = useState(null); // { label, count, pct } // { setup, wr, pnl, r, total }
+  const [rDistModal,    setRDistModal]    = useState(null);
+  const [expTimeModal,  setExpTimeModal]  = useState(null);
+  const [execDetails,   setExecDetails]   = useState(false); // { label, count, pct } // { setup, wr, pnl, r, total }
   const [exportModal,   setExportModal]   = useState(false);
   const [importModal,   setImportModal]   = useState(false);
   const [importConfirm, setImportConfirm] = useState(null); // { trades, source }
@@ -3554,97 +3556,175 @@ export default function App() {
                 </div>
               </div>
             </div>
-            {/* R Distribution + System Insight */}
+            {/* Expectancy by Time + System Insight */}
             {(()=>{
               const sysT = analTrades.filter(t=>t.validez>=3);
-              const total = sysT.length;
+              const MARKETS = ["Índices","Forex","Commodities"];
 
-              // 8 fixed buckets — each trade counted exactly once
-              const CATS = ["-2R","-1R","BE","+1R","+2R","+3R","+4R","+5R+"];
-              const counts = Object.fromEntries(CATS.map(c=>[c,0]));
+              // Extract hour from trade (hora field "HH:MM" or "H:MM")
+              const getHour = t => {
+                const h = resolveField(t,"hora")||t.hora||"";
+                const m = h.match(/^(\d{1,2}):/);
+                return m ? parseInt(m[1]) : null;
+              };
+
+              // Collect all hours that appear in data
+              const hourSet = new Set();
+              sysT.forEach(t=>{ const h=getHour(t); if(h!==null) hourSet.add(h); });
+              const HOURS = [...hourSet].sort((a,b)=>a-b);
+
+              // Build matrix: hour × market
+              const matrix = {};
+              HOURS.forEach(h=>{
+                matrix[h]={};
+                MARKETS.forEach(m=>{ matrix[h][m]={trades:[],r:0,pnl:0,wins:0,losses:0}; });
+              });
               sysT.forEach(t=>{
-                const r = t.rr;
-                if      (r <= -1.5)          counts["-2R"]++;
-                else if (r <= -0.5)          counts["-1R"]++;
-                else if (r > -0.5 && r < 0.5) counts["BE"]++;
-                else if (r <  1.5)           counts["+1R"]++;
-                else if (r <  2.5)           counts["+2R"]++;
-                else if (r <  3.5)           counts["+3R"]++;
-                else if (r <  4.5)           counts["+4R"]++;
-                else                         counts["+5R+"]++;
+                const h=getHour(t); if(h===null||!matrix[h]) return;
+                const mk = t.mercado||detectMercado(t.pair||"");
+                const cell = matrix[h][mk]; if(!cell) return;
+                cell.trades.push(t);
+                cell.r   += t.rr;
+                cell.pnl += t.pnl||0;
+                const r=getResult(t);
+                if(r==="Win")  cell.wins++;
+                if(r==="Loss") cell.losses++;
               });
 
-              const rows = CATS.map(label=>({
-                label,
-                count: counts[label],
-                pct:   total>0 ? (counts[label]/total)*100 : 0,
-              }));
-              const maxPct = Math.max(...rows.map(r=>r.pct), 1);
+              // Expectancy per cell
+              const getCellExp = (h,m) => {
+                const c = matrix[h]?.[m]; if(!c||!c.trades.length) return null;
+                return c.r/c.trades.length;
+              };
 
-              // Insight metrics
-              const sW   = sysT.filter(t=>getResult(t)==="Win");
-              const sL   = sysT.filter(t=>getResult(t)==="Loss");
-              const sWL  = sW.length+sL.length;
-              const wr   = sWL ? (sW.length/sWL)*100 : 0;
-              const gW   = sW.reduce((s,t)=>s+t.rr,0);
-              const gL   = Math.abs(sL.reduce((s,t)=>s+t.rr,0));
-              const pf   = gL>0 ? gW/gL : null;
-              const exp  = sysT.length ? sysT.reduce((s,t)=>s+t.rr,0)/sysT.length : 0;
+              // Global max/min for scale
+              const allExp = HOURS.flatMap(h=>MARKETS.map(m=>getCellExp(h,m))).filter(v=>v!==null);
+              const maxE = allExp.length ? Math.max(...allExp) : 1;
+              const minE = allExp.length ? Math.min(...allExp) : 0;
+              const range = (maxE-minE)||1;
+
+              // Best/Worst 10-min window per cell
+              const getBestWorst = (h,m) => {
+                const c = matrix[h]?.[m]; if(!c||!c.trades.length) return {best:null,worst:null};
+                const windows = {};
+                c.trades.forEach(t=>{
+                  const hora = resolveField(t,"hora")||t.hora||"";
+                  const mins = hora.match(/:(\d{2})/);
+                  if(!mins) return;
+                  const min = parseInt(mins[1]);
+                  const slot = Math.floor(min/10)*10;
+                  const key = `${String(h).padStart(2,"0")}:${String(slot).padStart(2,"0")}–${String(h).padStart(2,"0")}:${String(slot+9).padStart(2,"0")}`;
+                  if(!windows[key]) windows[key]={r:0,n:0};
+                  windows[key].r += t.rr;
+                  windows[key].n++;
+                });
+                const valid = Object.entries(windows).filter(([,v])=>v.n>=2);
+                if(!valid.length) return {best:"Insufficient data",worst:"Insufficient data"};
+                valid.sort(([,a],[,b])=>(b.r/b.n)-(a.r/a.n));
+                return { best:valid[0][0], worst:valid[valid.length-1][0] };
+              };
+
+              // Insight metrics (reused from before)
+              const sW  = sysT.filter(t=>getResult(t)==="Win");
+              const sL  = sysT.filter(t=>getResult(t)==="Loss");
+              const sWL = sW.length+sL.length;
+              const wr  = sWL ? (sW.length/sWL)*100 : 0;
+              const gW  = sW.reduce((s,t)=>s+t.rr,0);
+              const gL  = Math.abs(sL.reduce((s,t)=>s+t.rr,0));
+              const pf  = gL>0 ? gW/gL : null;
+              const exp = sysT.length ? sysT.reduce((s,t)=>s+t.rr,0)/sysT.length : 0;
               let peak=0,dd=0,run=0;
               [...sysT].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(t=>{run+=t.rr;if(run>peak)peak=run;const d=peak-run;if(d>dd)dd=d;});
-              const bigWins = (counts["+5R+"]||0)/Math.max(total,1)*100;
-              const lossRate= (counts["-1R"]+counts["-2R"])/Math.max(total,1)*100;
+              const lossRate=(sysT.filter(t=>t.rr<-0.5).length)/Math.max(sysT.length,1)*100;
+              const bigWins=(sysT.filter(t=>t.rr>=4.5).length)/Math.max(sysT.length,1)*100;
 
-              const insight = (()=>{
-                if(!total) return "Sin datos suficientes para evaluar el sistema en este período.";
-                if(exp>=0.5 && pf!==null && pf>=1.5 && wr>=50)
-                  return "The system maintains a solid statistical edge. Profitability appears consistent and supported by healthy performance characteristics rather than isolated outcomes.";
-                if(exp>0 && bigWins>20)
-                  return "The system remains profitable, although current results rely more heavily on a smaller number of high-performing trades. Edge sustainability should be monitored.";
-                if(exp>=0.3 && dd<3 && lossRate<30)
-                  return "The system continues to generate positive returns with a balanced risk profile, suggesting a stable and sustainable edge.";
-                if(exp>0 && pf!==null && pf<1.3)
-                  return "The system's statistical advantage appears weaker during this period, reducing the margin for execution errors. Focus on setup quality.";
-                if(exp<=0)
-                  return "The system is currently operating below breakeven. Prioritize reviewing setup validity and avoid expanding risk until the edge is re-established.";
+              const insight=(()=>{
+                if(!sysT.length) return "Sin datos suficientes para evaluar el sistema en este período.";
+                if(exp>=0.5&&pf!==null&&pf>=1.5&&wr>=50) return "The system maintains a solid statistical edge. Profitability appears consistent and supported by healthy performance characteristics rather than isolated outcomes.";
+                if(exp>0&&bigWins>20) return "The system remains profitable, although current results rely more heavily on a smaller number of high-performing trades. Edge sustainability should be monitored.";
+                if(exp>=0.3&&dd<3&&lossRate<30) return "The system continues to generate positive returns with a balanced risk profile, suggesting a stable and sustainable edge.";
+                if(exp>0&&pf!==null&&pf<1.3) return "The system's statistical advantage appears weaker during this period, reducing the margin for execution errors. Focus on setup quality.";
+                if(exp<=0) return "The system is currently operating below breakeven. Prioritize reviewing setup validity and avoid expanding risk until the edge is re-established.";
                 return "The system shows a moderate edge. Results are within expected range, though consistency across different trade outcomes could be improved.";
               })();
 
               return (<>
-                {/* R Distribution — true blue heatmap */}
+                {/* Expectancy by Time */}
                 <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18, marginBottom:12 }}>
-                  <SectionHeader title="R Distribution"/>
-                  {total===0
-                    ? <div style={{ color:G.textMuted, fontSize:11, textAlign:"center", padding:"18px 0" }}>Sin datos</div>
-                    : <div style={{ display:"grid", gridTemplateColumns:`repeat(${CATS.length},1fr)`, gap:3 }}>
-                        {rows.map(row=>{
-                          const t = row.pct/maxPct; // 0–1 intensity
-                          // Blue scale: low = near-transparent dark blue, high = vivid blue
-                          const alpha = Math.round((t*0.75+0.12)*255).toString(16).padStart(2,"0");
-                          const bg = `#3b82f6${alpha}`;
-                          const textCol = t>0.5?"#ffffff":"#93c5fd";
-                          return(
-                            <button key={row.label} onClick={()=>setRDistModal(row)}
-                              style={{ border:"none", cursor:row.count>0?"pointer":"default", borderRadius:6, padding:"12px 4px",
-                                display:"flex", flexDirection:"column", alignItems:"center", gap:5,
-                                background:bg, transition:"opacity 0.2s",
-                                outline:`1px solid #3b82f6${Math.round((t*0.6+0.1)*255).toString(16).padStart(2,"0")}` }}>
-                              <span style={{ fontSize:8, fontWeight:700, color:t>0.4?"#bfdbfe":"#64748b",
-                                fontFamily:G.fontDisplay, letterSpacing:"0.08em", textTransform:"uppercase" }}>
-                                {row.label}
-                              </span>
-                              <span style={{ fontSize:14, fontWeight:800, color:textCol,
-                                fontFamily:G.fontMono, letterSpacing:"-0.02em" }}>
-                                {row.pct>0?`${Math.round(row.pct)}%`:"—"}
-                              </span>
-                            </button>
-                          );
-                        })}
+                  <SectionHeader title="Expectancy by Time"/>
+
+                  {!HOURS.length
+                    ? <div style={{ color:G.textMuted, fontSize:11, textAlign:"center", padding:"18px 0" }}>
+                        Sin datos de hora — asegúrate de registrar la hora en tus trades.
                       </div>
+                    : <>
+                        {/* Column headers */}
+                        <div style={{ display:"grid", gridTemplateColumns:`52px repeat(${MARKETS.length},1fr)`, gap:3, marginBottom:3 }}>
+                          <div/>
+                          {MARKETS.map(m=>(
+                            <div key={m} style={{ fontSize:8, fontWeight:700, color:G.textSec, fontFamily:G.fontDisplay,
+                              letterSpacing:"0.08em", textTransform:"uppercase", textAlign:"center", padding:"4px 0" }}>
+                              {m}
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Matrix rows */}
+                        {HOURS.map(h=>(
+                          <div key={h} style={{ display:"grid", gridTemplateColumns:`52px repeat(${MARKETS.length},1fr)`, gap:3, marginBottom:3 }}>
+                            {/* Hour label */}
+                            <div style={{ display:"flex", alignItems:"center", justifyContent:"flex-end", paddingRight:8 }}>
+                              <span style={{ fontSize:10, fontWeight:600, color:G.textSec, fontFamily:G.fontMono }}>
+                                {String(h).padStart(2,"0")}h
+                              </span>
+                            </div>
+                            {/* Market cells */}
+                            {MARKETS.map(m=>{
+                              const c    = matrix[h]?.[m];
+                              const eVal = getCellExp(h,m);
+                              const n    = c?.trades.length||0;
+
+                              if(!n) return(
+                                <div key={m} style={{ borderRadius:6, height:48, background:G.surfaceAlt,
+                                  border:`1px solid ${G.border}`, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                                  <span style={{ fontSize:9, color:G.textMuted }}>—</span>
+                                </div>
+                              );
+
+                              // Blue intensity
+                              const norm   = Math.max(0, Math.min(1, (eVal-minE)/range));
+                              const alpha  = Math.round((norm*0.7+0.15)*255).toString(16).padStart(2,"0");
+                              const bgCell = `#3b82f6${alpha}`;
+                              const textC  = norm>0.5?"#ffffff":"#93c5fd";
+                              const {best,worst} = getBestWorst(h,m);
+                              const wr2    = c.wins+c.losses ? Math.round(c.wins/(c.wins+c.losses)*100) : 0;
+
+                              return(
+                                <button key={m} onClick={()=>setExpTimeModal({
+                                  hour:h, market:m, exp:eVal, r:c.r, pnl:c.pnl,
+                                  trades:n, wr:wr2, best, worst
+                                })}
+                                  style={{ borderRadius:6, height:48, background:bgCell, border:"none", cursor:"pointer",
+                                    outline:`1px solid #3b82f6${Math.round((norm*0.5+0.1)*255).toString(16).padStart(2,"0")}`,
+                                    display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+                                    gap:2, transition:"opacity 0.15s" }}>
+                                  <span style={{ fontSize:13, fontWeight:800, color:textC, fontFamily:G.fontMono,
+                                    letterSpacing:"-0.02em" }}>
+                                    {eVal>=0?"+":""}{eVal.toFixed(2)}R
+                                  </span>
+                                  <span style={{ fontSize:8, color:norm>0.4?"#bfdbfe":"#64748b", fontFamily:G.fontMono }}>
+                                    {n} trade{n>1?"s":""}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ))}
+                      </>
                   }
                 </div>
 
-                {/* System Insight — standalone card */}
+                {/* System Insight — standalone */}
                 <div style={{ background:`${G.accent}0a`, border:`1px solid ${G.accent}30`, borderRadius:10, padding:"14px 18px", marginBottom:12, display:"flex", gap:12, alignItems:"flex-start" }}>
                   <span style={{ fontSize:16, flexShrink:0, marginTop:1 }}>📊</span>
                   <div>
@@ -3718,22 +3798,33 @@ export default function App() {
               {(()=>{
                 const analExecCount    = analTrades.filter(t=>t.ejecutado).length;
                 const analNonExecCount = analTrades.filter(t=>!t.ejecutado).length;
-                const analExecRate     = analTrades.length>0?Math.round((analExecCount/analTrades.length)*100):0;
+                const analTotal        = analTrades.length;
+                const analExecRate     = analTotal>0?Math.round((analExecCount/analTotal)*100):0;
                 return(
-                  <div style={{ background:G.surface, padding:"18px 16px", display:"flex", flexDirection:"column", gap:8 }}>
-                    <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase" }}>Execution Rate</div>
-                    <div style={{ fontSize:36, fontWeight:800, fontFamily:G.fontUI, color:execEffCol, lineHeight:1, letterSpacing:"-0.04em" }}>{analExecRate}%</div>
-                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end" }}>
+                  <div style={{ background:G.surface, padding:"18px 16px", display:"flex", flexDirection:"column", gap:0 }}>
+                    <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:10 }}>Execution Rate</div>
+                    {/* Big % centered */}
+                    <div style={{ textAlign:"center", marginBottom:14 }}>
+                      <div style={{ fontSize:48, fontWeight:800, fontFamily:G.fontUI, color:execEffCol, lineHeight:1, letterSpacing:"-0.05em" }}>{analExecRate}%</div>
+                    </div>
+                    {/* Executed | Missed */}
+                    <div style={{ display:"flex", justifyContent:"space-around", alignItems:"center", marginBottom:12, paddingBottom:12, borderBottom:`1px solid ${G.border}` }}>
                       <div style={{ textAlign:"center" }}>
-                        <div style={{ fontSize:16, fontWeight:700, color:G.accent, fontFamily:G.fontMono }}>{analExecCount}</div>
-                        <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, marginTop:2 }}>Executed</div>
+                        <div style={{ fontSize:20, fontWeight:700, color:G.accent, fontFamily:G.fontMono, lineHeight:1 }}>{analExecCount}</div>
+                        <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, marginTop:3 }}>Executed</div>
                       </div>
-                      <div style={{ fontSize:20, color:G.border, fontWeight:300 }}>|</div>
+                      <div style={{ width:1, height:28, background:G.border }}/>
                       <div style={{ textAlign:"center" }}>
-                        <div style={{ fontSize:16, fontWeight:700, color:G.red, fontFamily:G.fontMono }}>{analNonExecCount}</div>
-                        <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, marginTop:2 }}>Missed</div>
+                        <div style={{ fontSize:20, fontWeight:700, color:G.red, fontFamily:G.fontMono, lineHeight:1 }}>{analNonExecCount}</div>
+                        <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, marginTop:3 }}>Missed</div>
                       </div>
                     </div>
+                    {/* Total Trades clickable */}
+                    <button onClick={()=>setExecDetails(true)}
+                      style={{ background:"none", border:"none", cursor:"pointer", padding:0, display:"flex", alignItems:"center", justifyContent:"space-between", width:"100%" }}>
+                      <span style={{ fontSize:10, color:G.textSec, fontFamily:G.fontDisplay }}>Total Trades: <span style={{ color:G.textPrimary, fontWeight:600 }}>{analTotal}</span></span>
+                      <span style={{ fontSize:12, color:G.blue }}>→</span>
+                    </button>
                   </div>
                 );
               })()}
@@ -4153,23 +4244,141 @@ export default function App() {
 
       </main>
 
-      {/* ── R DISTRIBUTION MODAL ── */}
-      {rDistModal && (
-        <div onClick={()=>setRDistModal(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:9900, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
-          <div onClick={e=>e.stopPropagation()} style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:12, padding:24, width:"100%", maxWidth:260 }}>
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
-              <span style={{ fontSize:16, fontWeight:700, fontFamily:G.fontDisplay, color:G.textPrimary }}>{rDistModal.label}</span>
-              <button onClick={()=>setRDistModal(null)} style={{ background:"none", border:"none", color:G.textMuted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>
-            </div>
-            <div style={{ textAlign:"center", padding:"16px 0", background:G.surfaceAlt, borderRadius:9, marginBottom:12 }}>
-              <div style={{ fontSize:42, fontWeight:800, fontFamily:G.fontMono, color:G.textPrimary, lineHeight:1, letterSpacing:"-0.04em" }}>
-                {rDistModal.pct.toFixed(0)}%
+      {/* ── EXECUTION DETAILS BOTTOM SHEET ── */}
+      {execDetails && (()=>{
+        const validT = analTrades.filter(t=>t.validez>=3);
+        const execT  = analTrades.filter(t=>t.ejecutado);
+
+        // Section 1: Execution Rate by Setup
+        const setupExec = {};
+        validT.forEach(t=>{
+          const k = t.setup||"Otro";
+          if(!setupExec[k]) setupExec[k]={total:0,exec:0};
+          setupExec[k].total++;
+          if(t.ejecutado) setupExec[k].exec++;
+        });
+        const execBySetup = Object.entries(setupExec)
+          .map(([s,d])=>({ setup:s, rate:d.total?Math.round((d.exec/d.total)*100):0, exec:d.exec, total:d.total }))
+          .sort((a,b)=>b.rate-a.rate);
+
+        // Section 2: Win Rate by Executed Setup
+        const setupWR = {};
+        execT.forEach(t=>{
+          const k = t.setup||"Otro";
+          if(!setupWR[k]) setupWR[k]={wins:0,losses:0};
+          const r = getResult(t);
+          if(r==="Win")  setupWR[k].wins++;
+          if(r==="Loss") setupWR[k].losses++;
+        });
+        const wrBySetup = Object.entries(setupWR)
+          .map(([s,d])=>{ const wl=d.wins+d.losses; return { setup:s, wr:wl?Math.round((d.wins/wl)*100):0, wins:d.wins, losses:d.losses }; })
+          .sort((a,b)=>b.wr-a.wr);
+
+        return(
+          <div onClick={()=>setExecDetails(false)}
+            style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:9900, display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
+            <div onClick={e=>e.stopPropagation()}
+              style={{ background:G.surface, borderRadius:"14px 14px 0 0", width:"100%", maxWidth:520, maxHeight:"80vh",
+                display:"flex", flexDirection:"column", boxShadow:"0 -8px 40px rgba(0,0,0,0.4)" }}>
+              {/* Handle + header */}
+              <div style={{ padding:"12px 20px 0", flexShrink:0 }}>
+                <div style={{ width:36, height:4, borderRadius:2, background:G.border, margin:"0 auto 14px" }}/>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+                  <span style={{ fontSize:15, fontWeight:700, fontFamily:G.fontDisplay, color:G.textPrimary }}>Execution Details</span>
+                  <button onClick={()=>setExecDetails(false)}
+                    style={{ background:"none", border:"none", color:G.textMuted, cursor:"pointer", fontSize:20, lineHeight:1 }}>×</button>
+                </div>
               </div>
-              <div style={{ fontSize:10, color:G.textMuted, marginTop:6 }}>of total trades</div>
+              {/* Scrollable content */}
+              <div style={{ overflowY:"auto", flex:1, padding:"0 20px 24px" }}>
+
+                {/* Section 1 */}
+                <div style={{ fontSize:9, color:G.textSec, letterSpacing:"0.12em", textTransform:"uppercase",
+                  fontFamily:G.fontDisplay, marginBottom:10 }}>Execution Rate by Setup</div>
+                <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:24 }}>
+                  {execBySetup.length===0 && <div style={{ color:G.textMuted, fontSize:11 }}>Sin datos</div>}
+                  {execBySetup.map(row=>{
+                    const col = row.rate>=80?G.accent:row.rate>=50?G.yellow:G.red;
+                    return(
+                      <div key={row.setup} style={{ display:"flex", alignItems:"center", gap:10 }}>
+                        <div style={{ width:72, flexShrink:0, fontSize:11, fontWeight:600, color:G.textPrimary, fontFamily:G.fontDisplay }}>{row.setup}</div>
+                        <div style={{ flex:1, height:6, background:G.surfaceAlt, borderRadius:3, overflow:"hidden" }}>
+                          <div style={{ height:"100%", width:`${row.rate}%`, background:col, borderRadius:3, transition:"width 0.4s" }}/>
+                        </div>
+                        <div style={{ width:80, flexShrink:0, textAlign:"right", fontSize:11, fontFamily:G.fontMono, color:col, fontWeight:700 }}>
+                          {row.rate}% <span style={{ color:G.textMuted, fontWeight:400, fontSize:9 }}>({row.exec}/{row.total})</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Section 2 */}
+                <div style={{ fontSize:9, color:G.textSec, letterSpacing:"0.12em", textTransform:"uppercase",
+                  fontFamily:G.fontDisplay, marginBottom:10 }}>Win Rate by Executed Setup</div>
+                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  {wrBySetup.length===0 && <div style={{ color:G.textMuted, fontSize:11 }}>Sin datos</div>}
+                  {wrBySetup.map(row=>{
+                    const col = row.wr>=60?G.accent:row.wr>=40?G.yellow:G.red;
+                    return(
+                      <div key={row.setup} style={{ display:"flex", alignItems:"center", gap:10 }}>
+                        <div style={{ width:72, flexShrink:0, fontSize:11, fontWeight:600, color:G.textPrimary, fontFamily:G.fontDisplay }}>{row.setup}</div>
+                        <div style={{ flex:1, height:6, background:G.surfaceAlt, borderRadius:3, overflow:"hidden" }}>
+                          <div style={{ height:"100%", width:`${row.wr}%`, background:col, borderRadius:3, transition:"width 0.4s" }}/>
+                        </div>
+                        <div style={{ width:80, flexShrink:0, textAlign:"right", fontSize:11, fontFamily:G.fontMono, color:col, fontWeight:700 }}>
+                          {row.wr}% <span style={{ color:G.textMuted, fontWeight:400, fontSize:9 }}>({row.wins}W/{row.losses}L)</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+              </div>
             </div>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 12px", background:G.surfaceAlt, borderRadius:8 }}>
-              <span style={{ fontSize:11, color:G.textSec, fontFamily:G.fontDisplay }}>Trades</span>
-              <span style={{ fontSize:16, fontWeight:700, color:G.textPrimary, fontFamily:G.fontMono }}>{rDistModal.count}</span>
+          </div>
+        );
+      })()}
+
+      {/* ── EXPECTANCY BY TIME MODAL ── */}
+      {expTimeModal && (
+        <div onClick={()=>setExpTimeModal(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:9900, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+          <div onClick={e=>e.stopPropagation()} style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:12, padding:24, width:"100%", maxWidth:300 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+              <div>
+                <div style={{ fontSize:13, fontWeight:700, fontFamily:G.fontDisplay, color:G.textPrimary }}>{String(expTimeModal.hour).padStart(2,"0")}h · {expTimeModal.market}</div>
+              </div>
+              <button onClick={()=>setExpTimeModal(null)} style={{ background:"none", border:"none", color:G.textMuted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>
+            </div>
+            {/* Main stat */}
+            <div style={{ textAlign:"center", padding:"14px 0", background:G.surfaceAlt, borderRadius:9, marginBottom:14 }}>
+              <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:4 }}>Expectancy</div>
+              <div style={{ fontSize:36, fontWeight:800, fontFamily:G.fontMono, color:pColor(expTimeModal.exp), lineHeight:1, letterSpacing:"-0.04em" }}>
+                {expTimeModal.exp>=0?"+":""}{expTimeModal.exp.toFixed(2)}R
+              </div>
+            </div>
+            {/* Stats grid */}
+            <div style={{ display:"flex", flexDirection:"column", gap:0, marginBottom:14 }}>
+              {[
+                ["Total R",   `${expTimeModal.r>=0?"+":""}${expTimeModal.r.toFixed(2)}R`, pColor(expTimeModal.r)],
+                ["P/L",       `${expTimeModal.pnl>=0?"+":"−"}$${Math.abs(expTimeModal.pnl).toFixed(0)}`,  pColor(expTimeModal.pnl)],
+                ["Trades",    `${expTimeModal.trades}`,  G.textPrimary],
+                ["Win Rate",  `${expTimeModal.wr}%`,     expTimeModal.wr>=50?G.accent:G.red],
+              ].map(([l,v,c])=>(
+                <div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:`1px solid ${G.border}` }}>
+                  <span style={{ fontSize:11, color:G.textSec, fontFamily:G.fontDisplay }}>{l}</span>
+                  <span style={{ fontSize:12, fontWeight:600, color:c, fontFamily:G.fontMono }}>{v}</span>
+                </div>
+              ))}
+            </div>
+            {/* Best / Worst window */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+              {[["Best Window", expTimeModal.best, G.accent],["Worst Window", expTimeModal.worst, G.red]].map(([label,val,col])=>(
+                <div key={label} style={{ background:G.surfaceAlt, border:`1px solid ${G.border}`, borderRadius:8, padding:"10px 10px" }}>
+                  <div style={{ fontSize:8, color:G.textMuted, fontFamily:G.fontDisplay, letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:5 }}>{label}</div>
+                  <div style={{ fontSize:val==="Insufficient data"?9:11, fontWeight:600, color:val==="Insufficient data"?G.textMuted:col, fontFamily:G.fontMono, lineHeight:1.3 }}>{val||"—"}</div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
