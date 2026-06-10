@@ -385,6 +385,11 @@ function getResult(t) {
   if (Math.abs(t.pnl) < t.capital * 0.5) return "BE";
   return t.rr > 0 ? "Win" : "Loss";
 }
+// For Sistema metrics: evaluate ALL valid trades (executed or not) based on RR
+function getSysResult(t) {
+  if (Math.abs(t.rr) < 0.1) return "BE";
+  return t.rr > 0 ? "Win" : "Loss";
+}
 const fmtD = v => `${v>=0?"+":"-"}$${Math.abs(v).toFixed(0)}`;
 const fmtR = v => `${v>=0?"+":""}${parseFloat(v).toFixed(2)}R`;
 
@@ -3002,8 +3007,8 @@ export default function App() {
 
   function groupByKey(arr,key,onlyExec=true){const m={};arr.filter(t=>onlyExec?t.ejecutado:true).forEach(t=>{const k=t[key]||"Otro";if(!m[k])m[k]={wins:0,losses:0,total:0,pnl:0,r:0};const r=getResult(t);if(r==="Win")m[k].wins++;else if(r==="Loss")m[k].losses++;m[k].total++;m[k].pnl+=t.pnl;m[k].r+=t.rr;});return Object.entries(m).sort(([,a],[,b])=>b.pnl-a.pnl).map(([label,d])=>({label,...d}));}
 
-  const confAnalysis=useMemo(()=>{const c={cb:{wins:0,losses:0,total:0,pnl:0,r:0},dc:{wins:0,losses:0,total:0,pnl:0,r:0},both:{wins:0,losses:0,total:0,pnl:0,r:0}};analTrades.forEach(t=>{const hasCB=(t.confluencias||[]).includes("Candle Bias");const hasDC=(t.confluencias||[]).includes("Daily Cycle");const add=key=>{const r=getResult(t);if(r==="Win")c[key].wins++;else if(r==="Loss")c[key].losses++;c[key].total++;c[key].pnl+=t.pnl;c[key].r+=t.rr;};if(hasCB&&hasDC){add("both");add("cb");add("dc");}else if(hasCB)add("cb");else if(hasDC)add("dc");});return[{label:"Candle Bias",...c.cb},{label:"Daily Cycle",...c.dc},{label:"Ambos",...c.both}].filter(d=>d.total>0);},[analTrades]);
-  const validAnalysis=useMemo(()=>[1,2,3,4].map(n=>{const vt=analTrades.filter(t=>t.validez===n&&t.ejecutado);return{n,total:vt.length,wins:vt.filter(t=>getResult(t)==="Win").length,losses:vt.filter(t=>getResult(t)==="Loss").length,pnl:vt.reduce((s,t)=>s+t.pnl,0),r:vt.reduce((s,t)=>s+t.rr,0)};}).filter(d=>d.total>0),[analTrades]);
+  const confAnalysis=useMemo(()=>{const c={cb:{wins:0,losses:0,total:0,pnl:0,r:0},dc:{wins:0,losses:0,total:0,pnl:0,r:0},both:{wins:0,losses:0,total:0,pnl:0,r:0}};analTrades.filter(t=>t.validez>=3).forEach(t=>{const hasCB=(t.confluencias||[]).includes("Candle Bias");const hasDC=(t.confluencias||[]).includes("Daily Cycle");const add=key=>{const r=getSysResult(t);if(r==="Win")c[key].wins++;else if(r==="Loss")c[key].losses++;c[key].total++;c[key].pnl+=t.pnl;c[key].r+=t.rr;};if(hasCB&&hasDC){add("both");add("cb");add("dc");}else if(hasCB)add("cb");else if(hasDC)add("dc");});return[{label:"Candle Bias",...c.cb},{label:"Daily Cycle",...c.dc},{label:"Ambos",...c.both}].filter(d=>d.total>0);},[analTrades]);
+  const validAnalysis=useMemo(()=>[1,2,3,4].map(n=>{const vt=analTrades.filter(t=>t.validez===n);return{n,total:vt.length,wins:vt.filter(t=>getSysResult(t)==="Win").length,losses:vt.filter(t=>getSysResult(t)==="Loss").length,pnl:vt.reduce((s,t)=>s+t.pnl,0),r:vt.reduce((s,t)=>s+t.rr,0)};}).filter(d=>d.total>0),[analTrades]);
   const dayStats  =useMemo(()=>statsByDayOfWeek(trades),[trades]);
   const weekStats =useMemo(()=>statsByWeekOfMonth(trades),[trades]);
   const monthStats=useMemo(()=>statsByMonth(trades),[trades]);
@@ -3372,8 +3377,8 @@ export default function App() {
             {/* Sistema KPI cards 2×3 */}
             {(()=>{
               const sT   = analTrades.filter(t=>t.validez>=3);
-              const sW   = sT.filter(t=>getResult(t)==="Win");
-              const sL   = sT.filter(t=>getResult(t)==="Loss");
+              const sW   = sT.filter(t=>getSysResult(t)==="Win");
+              const sL   = sT.filter(t=>getSysResult(t)==="Loss");
               const sWL  = sW.length+sL.length;
               const sWR  = sWL ? ((sW.length/sWL)*100).toFixed(1) : null;
               const sGW  = sW.reduce((s,t)=>s+t.rr,0);
@@ -3410,7 +3415,7 @@ export default function App() {
               sysT.forEach(t=>{
                 const k = t.setup||"Otro";
                 if(!setupMap[k]) setupMap[k]={wins:0,losses:0,total:0,pnl:0,r:0};
-                const res = getResult(t);
+                const res = getSysResult(t);
                 if(res==="Win")  setupMap[k].wins++;
                 if(res==="Loss") setupMap[k].losses++;
                 setupMap[k].total++;
@@ -3586,7 +3591,7 @@ export default function App() {
                 cell.trades.push(t);
                 cell.r   += t.rr;
                 cell.pnl += t.pnl||0;
-                const r=getResult(t);
+                const r=getSysResult(t);
                 if(r==="Win")  cell.wins++;
                 if(r==="Loss") cell.losses++;
               });
@@ -3625,8 +3630,8 @@ export default function App() {
               };
 
               // Insight metrics (reused from before)
-              const sW  = sysT.filter(t=>getResult(t)==="Win");
-              const sL  = sysT.filter(t=>getResult(t)==="Loss");
+              const sW  = sysT.filter(t=>getSysResult(t)==="Win");
+              const sL  = sysT.filter(t=>getSysResult(t)==="Loss");
               const sWL = sW.length+sL.length;
               const wr  = sWL ? (sW.length/sWL)*100 : 0;
               const gW  = sW.reduce((s,t)=>s+t.rr,0);
@@ -4020,9 +4025,9 @@ export default function App() {
               const sysT  = analTrades.filter(t=>t.validez>=3);  // all valid setups
               const execT = analTrades.filter(t=>t.ejecutado);   // all executed trades
 
-              const calcMetrics = ts => {
-                const wins   = ts.filter(t=>getResult(t)==="Win");
-                const losses = ts.filter(t=>getResult(t)==="Loss");
+              const calcMetrics = (ts, resultFn) => {
+                const wins   = ts.filter(t=>resultFn(t)==="Win");
+                const losses = ts.filter(t=>resultFn(t)==="Loss");
                 const wl     = wins.length + losses.length;
                 const wr     = wl ? (wins.length/wl)*100 : null;
                 const allR   = ts.map(t=>t.rr);
@@ -4041,8 +4046,8 @@ export default function App() {
                 return { count:ts.length, wr, exp, pf, avgW, avgL, dd };
               };
 
-              const sys  = calcMetrics(sysT);
-              const exec = calcMetrics(execT);
+              const sys  = calcMetrics(sysT, getSysResult);
+              const exec = calcMetrics(execT, getResult);
 
               const fmtR  = v => v===null?"—":`${v>=0?"+":""}${v.toFixed(2)}R`;
               const fmtPct= v => v===null?"—":`${v.toFixed(1)}%`;
