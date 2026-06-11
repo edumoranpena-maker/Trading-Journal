@@ -404,7 +404,7 @@ function calcStats(trades) {
   // WR based only on W and L (BE excluded from denominator)
   const wlTotal=wins.length+losses.length;
   const wr=wlTotal>0?wins.length/wlTotal:0;
-  const expVal=(wr*avgWinR-(1-wr)*avgLossR).toFixed(2);
+  const expVal = exec.length ? (totalR/exec.length).toFixed(2) : "0.00";
   const gw=wins.reduce((s,t)=>s+t.pnl,0), gl=Math.abs(losses.reduce((s,t)=>s+t.pnl,0)), pf=gl>0?(gw/gl).toFixed(2):"∞";
   const maxDD=(()=>{let pk=0,cum=0,dd=0;exec.forEach(t=>{cum+=t.pnl;if(cum>pk)pk=cum;dd=Math.max(dd,pk-cum);});return dd;})();
   const maxDDR=(()=>{let pk=0,cum=0,dd=0;exec.forEach(t=>{cum+=t.rr;if(cum>pk)pk=cum;dd=Math.max(dd,pk-cum);});return dd;})();
