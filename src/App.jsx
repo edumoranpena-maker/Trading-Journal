@@ -2922,7 +2922,7 @@ export default function App() {
   const [tab,        setTab]       = useState("dashboard");
   const [tf,         setTf]        = useState("monthly");
   const [tfPeriod,   setTfPeriod]  = useState("");
-  const [analTf,     setAnalTf]    = useState("annual");
+  const [analTf,     setAnalTf]    = useState("quarterly");
   const [analPeriod, setAnalPeriod]= useState("");
   const [addOpen,    setAddOpen]   = useState(false);
   const [editTrade,  setEditTrade] = useState(null);
@@ -3214,7 +3214,25 @@ export default function App() {
               <Sparkline trades={filteredTrades} H={150}/>
               <div style={{ display:"flex", justifyContent:"space-between", marginTop:8, fontSize:10, color:G.textSec }}><span>{T("inicio del período")}</span><span style={{color:pColor(stats.totalPnl)}}>{fmtD(stats.totalPnl)} · {fmtR(stats.totalR)}</span></div>
             </div>
-            <div style={{ marginBottom:12 }}>{(()=>{let seqYear,seqMonth;if(tf==="monthly"&&tfPeriod){const[yr,mo]=tfPeriod.split("-").map(Number);seqYear=yr;seqMonth=mo;}else if(tf==="weekly"&&tfPeriod){const d=new Date(tfPeriod);seqYear=d.getFullYear();seqMonth=d.getMonth();}else if(tf==="quarterly"&&tfPeriod){const[yr,qStr]=tfPeriod.split("-Q");seqYear=parseInt(yr);seqMonth=(parseInt(qStr)-1)*3;}else{const sorted=[...filteredTrades].sort((a,b)=>new Date(b.date)-new Date(a.date));const latest=sorted.length?new Date(sorted[0].date):new Date("2026-05-07");seqYear=latest.getFullYear();seqMonth=latest.getMonth();}return<ExecSequence trades={filteredTrades} year={seqYear} month={seqMonth}/>;})()}</div>
+            <div style={{ marginBottom:12 }}>{(()=>{
+              if(tf==="quarterly"&&tfPeriod){
+                const[yr,qStr]=tfPeriod.split("-Q");
+                const year=parseInt(yr),q=parseInt(qStr),startMonth=(q-1)*3;
+                return(
+                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    {[0,1,2].map(i=>{
+                      const mo=startMonth+i;
+                      return<ExecSequence key={mo} trades={filteredTrades} year={year} month={mo}/>;
+                    })}
+                  </div>
+                );
+              }
+              let seqYear,seqMonth;
+              if(tf==="monthly"&&tfPeriod){const[yr,mo]=tfPeriod.split("-").map(Number);seqYear=yr;seqMonth=mo;}
+              else if(tf==="weekly"&&tfPeriod){const d=new Date(tfPeriod);seqYear=d.getFullYear();seqMonth=d.getMonth();}
+              else{const sorted=[...filteredTrades].sort((a,b)=>new Date(b.date)-new Date(a.date));const latest=sorted.length?new Date(sorted[0].date):new Date("2026-05-07");seqYear=latest.getFullYear();seqMonth=latest.getMonth();}
+              return<ExecSequence trades={filteredTrades} year={seqYear} month={seqMonth}/>;
+            })()}</div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
               <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
                 <SectionHeader title={T("Por Mercado")}/>
@@ -3519,12 +3537,11 @@ export default function App() {
                 <SectionHeader title={T("Por Validez")}/>
                 <div style={{ display:"flex", flexDirection:"column", gap:8, marginTop:8 }}>
                   {(()=>{
-                    const sysT = analTrades.filter(t=>t.validez>=3);
                     const valMap = {};
-                    sysT.forEach(t=>{
+                    analTrades.forEach(t=>{
                       const k = t.validez||1;
                       if(!valMap[k]) valMap[k]={wins:0,losses:0,total:0,pnl:0,r:0};
-                      const res = getResult(t);
+                      const res = getSysResult(t);
                       if(res==="Win")  valMap[k].wins++;
                       if(res==="Loss") valMap[k].losses++;
                       valMap[k].total++; valMap[k].pnl+=t.pnl; valMap[k].r+=t.rr;
