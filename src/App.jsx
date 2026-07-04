@@ -1081,7 +1081,7 @@ function ExecSequence({ trades, year, month }) {
   const validCount = monthAll.filter(t=>t.validez>=3&&t.ejecutado).length;
   const achieved   = monthAll.filter(t=>t.validez>=3).length >= 6;
 
-  const beCol = theme === "light" ? "#9ca3af" : "#e8edf8";
+  const beCol = theme === "light" ? "#6b7280" : "#e8edf8";
   const resC  = r => r==="Win"?G.accent:r==="Loss"?G.red:r==="BE"?beCol:G.border;
   const resBg = r => r==="Win"?`${G.accent}22`:r==="Loss"?`${G.red}22`:r==="BE"?"rgba(150,150,160,0.12)":"transparent";
   const resLetter = r => r==="Win"?"W":r==="Loss"?"L":r==="BE"?"BE":"";
@@ -1131,11 +1131,11 @@ function ExecSequence({ trades, year, month }) {
                   display:"flex", alignItems:"center", justifyContent:"center",
                   flexShrink:0, position:"relative" }}>
                 {/* Yellow triangle */}
-                <span style={{ fontSize:13, lineHeight:1, userSelect:"none" }}>
+                <span style={{ fontSize:16, lineHeight:1, userSelect:"none" }}>
                   <span style={{ color:"#facc15" }}>▲</span>
                 </span>
                 {/* Black exclamation centered over triangle */}
-                <span style={{ position:"absolute", fontSize:7, fontWeight:900, color:"#000", lineHeight:1, marginTop:1 }}>!</span>
+                <span style={{ position:"absolute", fontSize:8, fontWeight:900, color:"#000", lineHeight:1, marginTop:2 }}>!</span>
               </div>
             );
           }
