@@ -1065,11 +1065,32 @@ function ExecSequence({ trades, year, month }) {
   }, [trades]);
   const yr  = year  !== undefined ? year  : fallback.yr;
   const mon = month !== undefined ? month : fallback.mon;
-  const monthT = trades.filter(t => { const[yrS,moS]=t.date.split("-");return parseInt(yrS)===yr&&parseInt(moS)-1===mon&&t.ejecutado; }).sort((a,b)=>new Date(a.date)-new Date(b.date));
-  const count=monthT.length, validCount=monthT.filter(t=>t.validez>=3).length, achieved=validCount>=6;
-  const boxes=Math.max(10,count+(10-count%10===10?0:10-count%10));
-  const resC=r=>r==="Win"?G.accent:r==="Loss"?G.red:r==="BE"?G.white:G.border;
-  const resBg=r=>r==="Win"?`${G.accent}22`:r==="Loss"?`${G.red}22`:r==="BE"?"rgba(232,237,248,0.08)":"transparent";
+
+  // All trades for this month (executed + missed valid), sorted chronologically
+  const monthAll = trades.filter(t => {
+    const [yrS,moS] = t.date.split("-");
+    return parseInt(yrS)===yr && parseInt(moS)-1===mon;
+  }).sort((a,b) => new Date(a.date)-new Date(b.date));
+
+  const executed   = monthAll.filter(t => t.ejecutado);
+  const missedValid= monthAll.filter(t => !t.ejecutado && t.validez>=3);
+  const invalidExec= monthAll.filter(t => t.ejecutado && t.validez<3);
+
+  const validCount = monthAll.filter(t=>t.validez>=3&&t.ejecutado).length;
+  const achieved   = monthAll.filter(t=>t.validez>=3).length >= 6;
+
+  const resC  = r => r==="Win"?G.accent:r==="Loss"?G.red:r==="BE"?"#e8edf8":G.border;
+  const resBg = r => r==="Win"?`${G.accent}22`:r==="Loss"?`${G.red}22`:r==="BE"?"rgba(232,237,248,0.08)":"transparent";
+  const resLetter = r => r==="Win"?"W":r==="Loss"?"L":r==="BE"?"BE":"";
+
+  // Build display list: executed + missed valid, sorted by date
+  const allDisplay = [
+    ...executed.map(t => ({ t, type: t.validez>=3 ? "exec_valid" : "exec_invalid" })),
+    ...missedValid.map(t => ({ t, type: "missed" })),
+  ].sort((a,b) => new Date(a.t.date)-new Date(b.t.date));
+
+  const boxes = Math.max(10, allDisplay.length + (10 - allDisplay.length%10 === 10 ? 0 : 10 - allDisplay.length%10));
+
   return (
     <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:"16px 18px" }}>
       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
@@ -1078,10 +1099,58 @@ function ExecSequence({ trades, year, month }) {
         <span style={{ fontSize:9, color:G.textSec, marginLeft:"auto" }}>Min. Sample Req. · {validCount}/6</span>
       </div>
       <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
-        {Array.from({length:boxes}).map((_,i)=>{const t=monthT[i],r=t?getResult(t):null,counts=t&&t.validez>=3;return(<div key={i} style={{width:28,height:28,borderRadius:"50%",background:r?resBg(r):G.surfaceAlt,border:`2px solid ${r?resC(r):G.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,color:r?resC(r):G.textMuted,fontWeight:700,flexShrink:0,boxShadow:counts&&r?`0 0 7px ${resC(r)}55`:"none",opacity:t&&!counts?0.4:1}}>{r==="Win"?"W":r==="Loss"?"L":r==="BE"?"B":""}</div>);})}
+        {Array.from({length:boxes}).map((_,i) => {
+          const item = allDisplay[i];
+          if (!item) return (
+            <div key={i} style={{ width:28, height:28, borderRadius:"50%", background:G.surfaceAlt, border:`2px solid ${G.border}`, flexShrink:0 }}/>
+          );
+          const { t, type } = item;
+          const r = type==="missed" ? getSysResult(t) : getResult(t);
+          const col = resC(r);
+          const bg  = resBg(r);
+
+          if (type === "exec_valid") {
+            // Solid circle, full opacity
+            return (
+              <div key={i} title={`${t.date} · ${t.pair} · ${r||"?"}`}
+                style={{ width:28, height:28, borderRadius:"50%", background:bg, border:`2px solid ${col}`,
+                  display:"flex", alignItems:"center", justifyContent:"center",
+                  fontSize:r==="BE"?7:9, color:col, fontWeight:700, flexShrink:0,
+                  boxShadow:`0 0 7px ${col}55` }}>
+                {resLetter(r)}
+              </div>
+            );
+          }
+          if (type === "exec_invalid") {
+            // Same color but warning triangle instead of letter
+            return (
+              <div key={i} title={`${t.date} · ${t.pair} · Inválido ejecutado`}
+                style={{ width:28, height:28, borderRadius:"50%", background:bg, border:`2px solid ${col}`,
+                  display:"flex", alignItems:"center", justifyContent:"center",
+                  fontSize:11, color:col, flexShrink:0 }}>
+                ⚠
+              </div>
+            );
+          }
+          // missed valid — reduced opacity, same result icon
+          return (
+            <div key={i} title={`${t.date} · ${t.pair} · No ejecutado`}
+              style={{ width:28, height:28, borderRadius:"50%", background:bg, border:`2px dashed ${col}`,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                fontSize:r==="BE"?7:9, color:col, fontWeight:700, flexShrink:0, opacity:0.4 }}>
+              {resLetter(r)}
+            </div>
+          );
+        })}
       </div>
-      <div style={{ display:"flex", gap:14, marginTop:10, fontSize:9, color:G.textSec }}>
-        <span style={{ color:G.accent }}>● Win</span><span style={{ color:G.red }}>● Loss</span><span style={{ color:G.white }}>● BE</span><span style={{ color:G.textMuted }}>○ Pendiente</span>
+      {/* Legend */}
+      <div style={{ display:"flex", gap:12, marginTop:10, fontSize:9, color:G.textSec, flexWrap:"wrap" }}>
+        <span><span style={{ color:G.accent }}>●</span> Win</span>
+        <span><span style={{ color:G.red }}>●</span> Loss</span>
+        <span><span style={{ color:"#e8edf8" }}>●</span> BE</span>
+        <span style={{ opacity:0.5 }}>⊙ Missed</span>
+        <span>⚠ Off-Plan</span>
+        <span style={{ color:G.textMuted }}>○ Pendiente</span>
       </div>
     </div>
   );
@@ -2416,16 +2485,14 @@ function buildMetricasReport(stats, trades, periodLabel) {
   const bes     = exec.filter(t => getResult(t) === "BE");
   const nonExec = trades.filter(t => !t.ejecutado);
 
-  // Execution sequence (sorted by date)
+  // Execution sequence (sorted by date) — encoded as JSON for graphical rendering
   const sorted = [...exec].sort((a,b) => new Date(a.date) - new Date(b.date));
   const validCount = sorted.filter(t => t.validez >= 3).length;
-  const seqLines = sorted
-    .map((t,i) => {
-      const r = getResult(t);
-      const tag = r === "Win" ? "W" : r === "Loss" ? "L" : "BE";
-      return `- **#${i+1}** ${t.date} · ${t.pair} · ${tag} · ${fmtD(t.pnl)} · ${fmtR(t.rr)}${t.validez >= 3 ? " ✓" : ""}`;
-    })
-    .join("\n");
+  const seqData = sorted.map(t => {
+    const r = getResult(t);
+    return `${t.pair}|${r==="Win"?"W":r==="Loss"?"L":"BE"}|${fmtR(t.rr)}${t.validez>=3?"✓":""}`;
+  });
+  const seqLines = `[[SEQ:${seqData.join(",")}]]`;
 
   // Session breakdown
   const sesMap = {};
@@ -2644,12 +2711,12 @@ async function generatePDF(reportContent, reportType, periodLabel) {
   doc.setTextColor(0, 200, 150);
   doc.text('PULSECORE', margin, 16);
   doc.setFontSize(8);
-  doc.setTextColor(94, 104, 128);
+  doc.setTextColor(150, 160, 180);
   doc.setFontSize(13);
-  doc.setTextColor(212, 217, 232);
+  doc.setTextColor(230, 235, 248);
   doc.text(typeInfo.label.toUpperCase(), margin, 33);
   doc.setFontSize(9);
-  doc.setTextColor(94, 104, 128);
+  doc.setTextColor(130, 140, 160);
   doc.text(`Período: ${periodLabel}  ·  ${new Date().toLocaleDateString('es-ES', { day:'2-digit', month:'long', year:'numeric' })}`, margin, 39);
   y = 52;
 
@@ -2677,14 +2744,42 @@ async function generatePDF(reportContent, reportType, periodLabel) {
       doc.setFillColor(0, 200, 150); doc.rect(margin, y, contentW, 0.5, 'F'); y += 5;
     } else if (line.startsWith('### ')) {
       checkPage(12); y += 3;
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(232, 237, 248);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(20, 24, 36);
       doc.text(line.replace('### ', ''), margin, y); y += 1;
-      doc.setFillColor(26, 31, 46); doc.rect(margin, y + 1, contentW, 0.3, 'F'); y += 5;
+      doc.setFillColor(60, 70, 100); doc.rect(margin, y + 1, contentW, 0.3, 'F'); y += 5;
+    } else if (line.startsWith('[[SEQ:') && line.endsWith(']]')) {
+      // Graphical trade sequence blocks
+      const raw = line.slice(6,-2);
+      const items = raw ? raw.split(',').map(s => { const [pair,tag,r] = s.replace('✓','').split('|'); return { pair:pair||'?', tag:tag||'?', r:r||'' }; }) : [];
+      if (!items.length) { y += 4; continue; }
+      const bW=22, bH=28, gap=4, perRow=Math.floor(contentW/(bW+gap));
+      const tagR = t => t==="W"?[0,200,150]:t==="L"?[220,50,70]:[140,140,160];
+      checkPage(Math.ceil(items.length/perRow)*(bH+gap+2)+4);
+      items.forEach((item,i) => {
+        const col=i%perRow, row2=Math.floor(i/perRow);
+        const x=margin+col*(bW+gap), yy=y+row2*(bH+gap);
+        const [cr,cg,cb]=tagR(item.tag);
+        // Card background
+        doc.setFillColor(20,24,36); doc.roundedRect(x,yy,bW,bH,2,2,'F');
+        doc.setDrawColor(cr,cg,cb); doc.setLineWidth(0.4); doc.roundedRect(x,yy,bW,bH,2,2,'S');
+        // Pair
+        doc.setFont('helvetica','bold'); doc.setFontSize(5.5); doc.setTextColor(160,170,190);
+        const pairTxt = (item.pair||'').slice(0,6);
+        doc.text(pairTxt, x+bW/2, yy+5.5, {align:'center'});
+        // Result circle
+        doc.setFillColor(cr,cg,cb); doc.circle(x+bW/2, yy+13, 4.5,'F');
+        doc.setFont('helvetica','bold'); doc.setFontSize(5.5); doc.setTextColor(255,255,255);
+        doc.text(item.tag, x+bW/2, yy+14.8, {align:'center'});
+        // R value
+        doc.setFont('helvetica','normal'); doc.setFontSize(5); doc.setTextColor(cr,cg,cb);
+        doc.text(item.r||'', x+bW/2, yy+22, {align:'center'});
+      });
+      y += Math.ceil(items.length/perRow)*(bH+gap)+4;
     } else if (line.startsWith('- ') || line.startsWith('• ')) {
       const text = line.replace(/^[-•]\s*/, '').replace(/\*\*/g, '');
       const wrapped = doc.splitTextToSize(`• ${text}`, contentW - 4);
       checkPage(wrapped.length * 4.5 + 1);
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(180, 185, 200);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(30, 35, 50);
       wrapped.forEach(wl => { doc.text(wl, margin + 3, y); y += 4.5; });
     } else if (line.trim() === '') {
       y += 2;
@@ -2692,7 +2787,7 @@ async function generatePDF(reportContent, reportType, periodLabel) {
       const text = line.replace(/\*\*/g, '');
       const wrapped = doc.splitTextToSize(text, contentW);
       checkPage(wrapped.length * 4.5);
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(180, 185, 200);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(30, 35, 50);
       wrapped.forEach(wl => { doc.text(wl, margin, y); y += 4.5; });
     }
   }
@@ -2761,6 +2856,23 @@ function ReportesTab({ trades, setExportModal, setImportModal, importFeedback, s
         elements.push(<div key={key++} style={{ marginTop:24, marginBottom:10 }}><div style={{ background:"rgba(0,200,150,0.06)", border:`1px solid ${G.accent}33`, borderRadius:8, padding:"10px 16px" }}><div style={{ fontSize:14, fontWeight:700, color:G.accent, fontFamily:G.fontDisplay }}>{line.replace('## ','')}</div></div></div>);
       } else if (line.startsWith('### ')) {
         elements.push(<div key={key++} style={{ marginTop:18, marginBottom:8 }}><div style={{ fontSize:12, fontWeight:600, color:G.textPrimary, fontFamily:G.fontDisplay, paddingBottom:6, borderBottom:`1px solid ${G.border}` }}>{line.replace('### ','')}</div></div>);
+      } else if (line.startsWith('[[SEQ:') && line.endsWith(']]')) {
+        // Graphical trade sequence blocks
+        const raw = line.slice(6,-2);
+        const items = raw ? raw.split(',').map(s => { const [pair,tag,r] = s.replace('✓','').split('|'); return { pair, tag, r, valid: s.includes('✓') }; }) : [];
+        const tagCol = t => t==="W"?G.accent:t==="L"?G.red:"#9ca3af";
+        elements.push(
+          <div key={key++} style={{ display:"flex", flexWrap:"wrap", gap:6, margin:"8px 0 12px" }}>
+            {items.map((item,i) => (
+              <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2, background:G.surfaceAlt, border:`1px solid ${tagCol(item.tag)}44`, borderRadius:7, padding:"6px 8px", minWidth:52 }}>
+                <span style={{ fontSize:8, color:G.textSec, fontFamily:G.fontMono, fontWeight:600, whiteSpace:"nowrap", overflow:"hidden", maxWidth:48, textOverflow:"ellipsis" }}>{item.pair}</span>
+                <div style={{ width:22, height:22, borderRadius:"50%", background:`${tagCol(item.tag)}22`, border:`2px solid ${tagCol(item.tag)}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:8, color:tagCol(item.tag), fontWeight:700 }}>{item.tag}</div>
+                <span style={{ fontSize:8, color:tagCol(item.tag), fontFamily:G.fontMono, fontWeight:600 }}>{item.r}</span>
+              </div>
+            ))}
+            {items.length===0 && <span style={{fontSize:10,color:G.textMuted}}>Sin datos</span>}
+          </div>
+        );
       } else if (line.startsWith('- ') || line.startsWith('• ')) {
         const text = line.replace(/^[-•]\s*/,'');
         elements.push(<div key={key++} style={{ display:"flex", gap:8, marginBottom:4, paddingLeft:8 }}><span style={{ color:G.accent, flexShrink:0, fontSize:10 }}>▸</span><span style={{ fontSize:11, color:G.textSec, lineHeight:1.6 }} dangerouslySetInnerHTML={{ __html: text.replace(/\*\*([^*]+)\*\*/g,`<strong style="color:${G.textPrimary}">$1</strong>`) }}/></div>);
