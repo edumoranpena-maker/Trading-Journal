@@ -1124,18 +1124,19 @@ function ExecSequence({ trades, year, month }) {
             );
           }
           if (type === "exec_invalid") {
-            // Circle with result color, but yellow triangle + black "!" inside
             return (
               <div key={i} title={`${t.date} · ${t.pair} · Inválido ejecutado`}
-                style={{ width:28, height:28, borderRadius:"50%", background:bg, border:`2px solid ${col}`,
+                style={{ width:28, height:28, borderRadius:"50%", background:bg,
+                  border:`2px dashed ${col}`,
                   display:"flex", alignItems:"center", justifyContent:"center",
-                  flexShrink:0, position:"relative" }}>
-                {/* Yellow triangle */}
-                <span style={{ fontSize:16, lineHeight:1, userSelect:"none" }}>
-                  <span style={{ color:"#facc15" }}>▲</span>
-                </span>
-                {/* Black exclamation centered over triangle */}
-                <span style={{ position:"absolute", fontSize:8, fontWeight:900, color:"#000", lineHeight:1, marginTop:2 }}>!</span>
+                  flexShrink:0 }}>
+                <svg width="20" height="18" viewBox="0 0 20 18" style={{ display:"block" }}>
+                  {/* Yellow filled triangle */}
+                  <polygon points="10,1 19,17 1,17" fill="#facc15" stroke="#f59e0b" strokeWidth="0.8" strokeLinejoin="round"/>
+                  {/* Black exclamation mark */}
+                  <rect x="9" y="6" width="2" height="6" rx="1" fill="#000"/>
+                  <rect x="9" y="14" width="2" height="2" rx="1" fill="#000"/>
+                </svg>
               </div>
             );
           }
