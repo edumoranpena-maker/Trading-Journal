@@ -1076,11 +1076,14 @@ function ExecSequence({ trades, year, month }) {
   const missedValid= monthAll.filter(t => !t.ejecutado && t.validez>=3);
   const invalidExec= monthAll.filter(t => t.ejecutado && t.validez<3);
 
+  const { theme } = useContext(SettingsCtx);
+
   const validCount = monthAll.filter(t=>t.validez>=3&&t.ejecutado).length;
   const achieved   = monthAll.filter(t=>t.validez>=3).length >= 6;
 
-  const resC  = r => r==="Win"?G.accent:r==="Loss"?G.red:r==="BE"?"#e8edf8":G.border;
-  const resBg = r => r==="Win"?`${G.accent}22`:r==="Loss"?`${G.red}22`:r==="BE"?"rgba(232,237,248,0.08)":"transparent";
+  const beCol = theme === "light" ? "#9ca3af" : "#e8edf8";
+  const resC  = r => r==="Win"?G.accent:r==="Loss"?G.red:r==="BE"?beCol:G.border;
+  const resBg = r => r==="Win"?`${G.accent}22`:r==="Loss"?`${G.red}22`:r==="BE"?"rgba(150,150,160,0.12)":"transparent";
   const resLetter = r => r==="Win"?"W":r==="Loss"?"L":r==="BE"?"BE":"";
 
   // Build display list: executed + missed valid, sorted by date
@@ -1110,7 +1113,6 @@ function ExecSequence({ trades, year, month }) {
           const bg  = resBg(r);
 
           if (type === "exec_valid") {
-            // Solid circle, full opacity
             return (
               <div key={i} title={`${t.date} · ${t.pair} · ${r||"?"}`}
                 style={{ width:28, height:28, borderRadius:"50%", background:bg, border:`2px solid ${col}`,
@@ -1122,20 +1124,25 @@ function ExecSequence({ trades, year, month }) {
             );
           }
           if (type === "exec_invalid") {
-            // Same color but warning triangle instead of letter
+            // Circle with result color, but yellow triangle + black "!" inside
             return (
               <div key={i} title={`${t.date} · ${t.pair} · Inválido ejecutado`}
                 style={{ width:28, height:28, borderRadius:"50%", background:bg, border:`2px solid ${col}`,
                   display:"flex", alignItems:"center", justifyContent:"center",
-                  fontSize:11, color:col, flexShrink:0 }}>
-                ⚠
+                  flexShrink:0, position:"relative" }}>
+                {/* Yellow triangle */}
+                <span style={{ fontSize:13, lineHeight:1, userSelect:"none" }}>
+                  <span style={{ color:"#facc15" }}>▲</span>
+                </span>
+                {/* Black exclamation centered over triangle */}
+                <span style={{ position:"absolute", fontSize:7, fontWeight:900, color:"#000", lineHeight:1, marginTop:1 }}>!</span>
               </div>
             );
           }
-          // missed valid — reduced opacity, same result icon
+          // missed valid — solid circle, reduced opacity (same as old "invalid" look)
           return (
             <div key={i} title={`${t.date} · ${t.pair} · No ejecutado`}
-              style={{ width:28, height:28, borderRadius:"50%", background:bg, border:`2px dashed ${col}`,
+              style={{ width:28, height:28, borderRadius:"50%", background:bg, border:`2px solid ${col}`,
                 display:"flex", alignItems:"center", justifyContent:"center",
                 fontSize:r==="BE"?7:9, color:col, fontWeight:700, flexShrink:0, opacity:0.4 }}>
               {resLetter(r)}
@@ -1147,9 +1154,9 @@ function ExecSequence({ trades, year, month }) {
       <div style={{ display:"flex", gap:12, marginTop:10, fontSize:9, color:G.textSec, flexWrap:"wrap" }}>
         <span><span style={{ color:G.accent }}>●</span> Win</span>
         <span><span style={{ color:G.red }}>●</span> Loss</span>
-        <span><span style={{ color:"#e8edf8" }}>●</span> BE</span>
-        <span style={{ opacity:0.5 }}>⊙ Missed</span>
-        <span>⚠ Off-Plan</span>
+        <span><span style={{ color:beCol }}>●</span> BE</span>
+        <span style={{ opacity:0.4 }}>● Missed</span>
+        <span><span style={{ color:"#facc15" }}>▲</span> Off-Plan</span>
         <span style={{ color:G.textMuted }}>○ Pendiente</span>
       </div>
     </div>
