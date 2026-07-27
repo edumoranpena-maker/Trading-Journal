@@ -39,7 +39,7 @@ export async function deleteSession(id) {
 
 // ─── Objectives ──────────────────────────────────────────────────────────────
 // src/services/objectivesService.js  (exportado desde este mismo archivo)
-const OT = "objectives";
+const OT = "trading_objectives";
 
 export async function fetchObjectives({ activo = true } = {}) {
   let q = supabase.from(OT).select("*").order("periodo", { ascending: false });
@@ -71,7 +71,7 @@ export async function deleteObjective(id) {
 
 
 // ─── Config ──────────────────────────────────────────────────────────────────
-const CT = "user_config";
+const CT = "trading_user_config";
 
 /** Devuelve toda la config como objeto plano { clave: valor } */
 export async function fetchConfig() {
@@ -95,7 +95,7 @@ export async function bulkSetConfig(updates) {
 
 
 // ─── Analytics ───────────────────────────────────────────────────────────────
-const AT = "analytics_events";
+const AT = "trading_analytics_events";
 
 /** Fire-and-forget: registra un evento sin bloquear la UI. */
 export function trackEvent(evento, payload = {}) {
