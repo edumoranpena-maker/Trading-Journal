@@ -3000,6 +3000,38 @@ const TRADES_OPTIONS = USE_SUPABASE
   ? {}
   : { useSample: true, sampleData: SAMPLE };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// BRIDGE xPlannation ↔ Doers (postMessage)
+// ─────────────────────────────────────────────────────────────────────────────
+// No existía ningún bridge previo en este repo (sin BRIDGE_CHANNEL/VERSION,
+// sin listener de "message", sin postToDoersJournal/readBridgeMessage) — se
+// buscó explícitamente y no hay rastro de nada así en src/. Este es el
+// primer contrato definido para esta comunicación; si xPlannation ya tiene
+// su propio envelope de bridge para otra integración (Stats), este debe
+// ajustarse para calzar exactamente con ese formato en vez de este.
+//
+// channel/version existen para que el listener pueda ignorar con seguridad
+// cualquier otro postMessage que llegue a la página (extensiones del
+// navegador, otros widgets, etc.) sin depender solo del "type".
+const BRIDGE_CHANNEL = "xplannation-doers-bridge";
+const BRIDGE_VERSION = 1;
+
+// Origen permitido de xPlannation para validar mensajes entrantes. NO se usa
+// "*" en ningún punto del bridge (ni al validar, ni al responder — la
+// respuesta usa el origin real del mensaje ya validado, ver
+// sendTradeSaved()).
+//
+// ⚠️ ACCIÓN REQUERIDA: no existe en este repo ninguna constante ya definida
+// con el dominio real de xPlannation (se revisó .env.example, vite.config.js
+// y todo src/ — no aparece). El valor de abajo es un placeholder que debe
+// reemplazarse por el dominio de producción real de xPlannation, o mejor
+// aún, configurarse vía variable de entorno VITE_XPLANNATION_ORIGIN en
+// .env.local (mismo patrón que VITE_SUPABASE_URL). Mientras esto no apunte
+// al dominio correcto, trade:open-form será ignorado silenciosamente por
+// diseño (fail-closed, no fail-open).
+const XPLANNATION_ORIGIN =
+  import.meta.env.VITE_XPLANNATION_ORIGIN || "https://REPLACE-WITH-XPLANNATION-ORIGIN";
+
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
 export default function App() {
   // ── Settings (persisted) ─────────────────────────────────────────────────
@@ -3040,6 +3072,14 @@ export default function App() {
   const [analPeriod, setAnalPeriod]= useState("");
   const [addOpen,    setAddOpen]   = useState(false);
   const [editTrade,  setEditTrade] = useState(null);
+  // Contexto del bridge con xPlannation: solo tiene valor cuando el
+  // formulario de Nuevo Trade fue abierto por un "trade:open-form" válido
+  // recibido por postMessage. Mientras sea null, todo el flujo de Nuevo
+  // Trade se comporta exactamente igual que hoy (ver 8. NO CAMBIAR EL FLUJO
+  // NORMAL). Guarda también la window/origin de donde vino el mensaje, para
+  // poder responder exactamente a ese remitente en trade:saved sin
+  // necesidad de asumir window.parent.
+  const [bridgeContext, setBridgeContext] = useState(null); // { context, sourceWindow, sourceOrigin } | null
   const [opError,    setOpError]   = useState(null);  // errores de CRUD
   const [mobNavOpen, setMobNavOpen] = useState(false);
   const [tradesNavDate, setTradesNavDate] = useState(() => { const n=new Date(); return {y:n.getFullYear(),m:n.getMonth()}; });
@@ -3070,6 +3110,63 @@ export default function App() {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [mobNavOpen]);
+
+  // ── Bridge: recibir "trade:open-form" desde xPlannation ────────────────────
+  // Un solo listener por vida del componente App (deps: [] — nunca se vuelve
+  // a registrar en cada render, evita duplicados). Validación estricta y en
+  // orden, fail-closed en cualquier paso: origin exacto (nunca "*"), fuente
+  // de la ventana, canal/versión del bridge, y forma mínima del contexto.
+  useEffect(() => {
+    function handleBridgeMessage(event) {
+      // 1) Origin exacto — el primer y más importante filtro. Sin esto,
+      //    cualquier pestaña/sitio podría abrir el formulario de Doers.
+      if (event.origin !== XPLANNATION_ORIGIN) return;
+
+      // 2) event.source cuando sea posible: Doers se embebe como iframe
+      //    dentro de xPlannation, así que el remitente legítimo es el
+      //    documento padre. En un iframe, event.source === window.parent.
+      //    (Se compara contra window.parent en vez de exigir que exista un
+      //    parent distinto de window, para no romper el flujo normal si
+      //    Doers se abre standalone durante desarrollo — en ese caso nunca
+      //    va a llegar un trade:open-form real de todos modos.)
+      if (event.source !== window.parent) return;
+
+      const msg = event.data;
+      if (!msg || typeof msg !== "object") return;
+
+      // 3) Envelope del bridge — canal y versión, no solo el "type".
+      if (msg.channel !== BRIDGE_CHANNEL) return;
+      if (msg.version !== BRIDGE_VERSION) return;
+      if (msg.type !== "trade:open-form") return;
+
+      // 4) Forma mínima del contexto — source/postId siempre; subtemaId
+      //    solo si source === "subtema". Si no calza, se ignora el mensaje
+      //    completo en vez de abrir el formulario sin contexto confiable.
+      const context = msg.context;
+      const validPost    = context && context.source === "post"    && typeof context.postId === "string" && context.postId;
+      const validSubtema  = context && context.source === "subtema" && typeof context.postId === "string" && context.postId && typeof context.subtemaId === "string" && context.subtemaId;
+      if (!validPost && !validSubtema) return;
+
+      setBridgeContext({ context, sourceWindow: event.source, sourceOrigin: event.origin });
+      setTab("trades");
+      setEditTrade(null);
+      setAddOpen(true);
+    }
+
+    window.addEventListener("message", handleBridgeMessage);
+    return () => window.removeEventListener("message", handleBridgeMessage);
+  }, []);
+
+  // ── Bridge: red de seguridad — nunca dejar un bridgeContext "colgado" ──────
+  // Si el formulario se cierra por CUALQUIER camino (× Cancelar, el propio
+  // botón "+ Nuevo Trade" actuando como toggle, guardado exitoso) sin que
+  // ese cierre haya limpiado bridgeContext explícitamente, esto lo limpia
+  // igual. Sin esto, una sesión de Nuevo Trade abierta manualmente DESPUÉS
+  // de cancelar una que vino de xPlannation heredaría el contexto viejo y
+  // dispararía trade:saved para un trade que el usuario creó por su cuenta.
+  useEffect(() => {
+    if (!addOpen && bridgeContext) setBridgeContext(null);
+  }, [addOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const TABS = [
     {id:"dashboard",label:T("Dashboard")},
@@ -3133,12 +3230,41 @@ export default function App() {
   const dominantEmotion=useMemo(()=>{const counts={};filteredTrades.forEach(t=>{const s=t.estado_mental;if(s)counts[s]=(counts[s]||0)+1;});if(!Object.keys(counts).length)return null;const top=Object.entries(counts).sort(([,a],[,b])=>b-a)[0];return{state:top[0],count:top[1],total:filteredTrades.length,polarity:getMentalPolarity(top[0])};},[filteredTrades]);
   const mentalStateAnalysis=useMemo(()=>{const m={};analTrades.forEach(t=>{const s=t.estado_mental;if(!s)return;if(!m[s])m[s]={total:0,exec:0,wins:0,losses:0,netPnl:0,missedProfit:0,avoidedLoss:0};m[s].total++;if(t.ejecutado){m[s].exec++;m[s].netPnl+=t.pnl;const r=getResult(t);if(r==="Win")m[s].wins++;else if(r==="Loss")m[s].losses++;}else{if(t.rr>0)m[s].missedProfit+=Math.abs(t.pnl);if(t.rr<0)m[s].avoidedLoss+=Math.abs(t.pnl);}});return Object.entries(m).map(([state,d])=>{const wl=d.wins+d.losses;return{state,total:d.total,exec:d.exec,wins:d.wins,netPnl:d.netPnl,missedProfit:d.missedProfit,avoidedLoss:d.avoidedLoss,winRate:wl>0?((d.wins/wl)*100).toFixed(0):"—",polarity:getMentalPolarity(state)};}).sort((a,b)=>b.netPnl-a.netPnl);},[analTrades]);
 
+  // ── Bridge: responder "trade:saved" a xPlannation ──────────────────────────
+  // Se responde a event.source/event.origin capturados en el momento en que
+  // llegó el trade:open-form (ya validados ahí contra XPLANNATION_ORIGIN),
+  // no a un window.parent recalculado aquí — así el mensaje va exactamente
+  // a la ventana que lo pidió, sin volver a asumir nada sobre la relación
+  // iframe/parent en este punto del código.
+  function sendTradeSaved(createdTrade) {
+    if (!bridgeContext) return; // guarda extra: nunca se llama fuera del flujo del bridge (ver addTrade)
+    const { context, sourceWindow, sourceOrigin } = bridgeContext;
+    const payload = {
+      channel: BRIDGE_CHANNEL,
+      version: BRIDGE_VERSION,
+      type: "trade:saved",
+      context,
+      trade: createdTrade ? { id: createdTrade.id } : null,
+    };
+    try {
+      sourceWindow.postMessage(payload, sourceOrigin);
+    } catch (e) {
+      // Un fallo al notificar a xPlannation no debe afectar el trade ya
+      // guardado en Supabase ni el estado de Doers — solo se registra.
+      console.error("[bridge] no se pudo enviar trade:saved:", e);
+    }
+  }
+
   // ── CRUD wrappers (compatibles con modo demo y Supabase) ──────────────────
   async function addTrade(t) {
     setOpError(null);
-    const { error: err } = await addTradeAsync(t);
-    if (err) setOpError(err);
-    else setAddOpen(false);
+    const { data, error: err } = await addTradeAsync(t);
+    if (err) { setOpError(err); return; } // INSERT falló: NO se envía trade:saved, formulario sigue abierto — comportamiento actual intacto
+    setAddOpen(false);
+    if (bridgeContext) {
+      sendTradeSaved(data);
+      setBridgeContext(null);
+    }
   }
 
   async function updateTrade(t) {
@@ -3399,7 +3525,7 @@ export default function App() {
                 <button onClick={() => setOpError(null)} style={{ background:"none", border:"none", color:G.red, cursor:"pointer", fontSize:16, lineHeight:1 }}>×</button>
               </div>
             )}
-            {addOpen&&!editTrade&&<TradeForm onSave={addTrade} onCancel={()=>setAddOpen(false)}/>}
+            {addOpen&&!editTrade&&<TradeForm onSave={addTrade} onCancel={()=>{setAddOpen(false);setBridgeContext(null);}}/>}
             {editTrade&&<TradeForm initial={editTrade} onSave={updateTrade} onCancel={()=>setEditTrade(null)}/>}
             <div style={{ background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:18 }}>
               <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
